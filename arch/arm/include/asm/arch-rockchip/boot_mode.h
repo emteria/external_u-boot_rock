@@ -34,6 +34,9 @@ enum {
 	BCB_MSG_RECOVERY_NONE,
 	BCB_MSG_RECOVERY_RK_FWUPDATE,
 	BCB_MSG_RECOVERY_PCBA,
+#ifdef CONFIG_RADXA // radxa customization
+	BCB_MSG_RECOVERY_WIPE,
+#endif
 };
 
 #endif

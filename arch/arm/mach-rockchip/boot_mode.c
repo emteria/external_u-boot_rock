@@ -42,6 +42,9 @@ static int misc_require_recovery(u32 bcb_offset)
 	bmsg = memalign(ARCH_DMA_MINALIGN, cnt * dev_desc->blksz);
 	if (blk_dread(dev_desc, part.start + bcb_offset, cnt, bmsg) != cnt) {
 		recovery = 0;
+#ifdef CONFIG_RADXA // radxa customization
+		bcb_recovery_msg = BCB_MSG_RECOVERY_NONE;
+#endif
 	} else {
 		recovery = !strcmp(bmsg->command, "boot-recovery");
 		if (!strcmp(bmsg->recovery, "recovery\n--rk_fwupdate\n"))
@@ -49,6 +52,13 @@ static int misc_require_recovery(u32 bcb_offset)
 		else if (!strcmp(bmsg->recovery, "recovery\n--factory_mode=whole") ||
 			 !strcmp(bmsg->recovery, "recovery\n--factory_mode=small"))
 			bcb_recovery_msg = BCB_MSG_RECOVERY_PCBA;
+#ifdef CONFIG_RADXA // radxa customization
+		else if (!strcmp(bmsg->recovery, "recovery\n--wipe_all")){
+			bcb_recovery_msg = BCB_MSG_RECOVERY_WIPE;
+		}else{
+			bcb_recovery_msg = BCB_MSG_RECOVERY_NONE;
+#endif
+		}
 	}
 
 	free(bmsg);

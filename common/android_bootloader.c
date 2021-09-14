@@ -29,6 +29,10 @@
 #include <console.h>
 #include <sysmem.h>
 
+#ifdef CONFIG_RADXA // Raxda customization
+#include <asm/arch/boot_mode.h>
+#endif
+
 DECLARE_GLOBAL_DATA_PTR;
 
 int android_bootloader_message_load(
@@ -934,9 +938,23 @@ int android_bootloader_boot_flow(struct blk_desc *dev_desc,
 				mode = ANDROID_BOOT_MODE_RECOVERY;
 		}
 #endif
+
+#ifdef CONFIG_RADXA // radxa customization
+        if (mode == ANDROID_BOOT_MODE_RECOVERY && get_bcb_recovery_msg() == BCB_MSG_RECOVERY_WIPE){
+            //printf("BCB_MSG_RECOVERY_WIPE set bootargs androidboot.selinux=permissive\n");
+            env_update("bootargs", "androidboot.selinux=permissive");
+        }
+#endif
 	}
 
+#ifdef CONFIG_RADXA // radxa customization
+	printf("ANDROID: reboot reason: \"%s%s\"\n",
+		android_boot_mode_str(mode),
+		(mode == ANDROID_BOOT_MODE_RECOVERY && get_bcb_recovery_msg() == BCB_MSG_RECOVERY_WIPE) ? " --wipe_all":"");
+#else
 	printf("ANDROID: reboot reason: \"%s\"\n", android_boot_mode_str(mode));
+#endif
+
 #ifdef CONFIG_ANDROID_AB
 	/* Get current slot_suffix */
 	if (ab_get_slot_suffix(slot_suffix))

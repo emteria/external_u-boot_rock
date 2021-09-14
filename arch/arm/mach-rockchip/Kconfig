@@ -396,6 +396,14 @@ config ROCKCHIP_RK3568
 	help
 	  The Rockchip RK3568 is a ARM-based SoC with a quad-core Cortex-A55.
 
+config RADXA
+        bool "Support radxa board"
+        default n
+
+config RADXA_ROCK3
+        bool "Support radxa rock3 board"
+        default n
+
 if ROCKCHIP_RK3568
 
 config TPL_LDSCRIPT
