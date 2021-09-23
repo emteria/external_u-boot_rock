@@ -57,8 +57,8 @@ static int misc_require_recovery(u32 bcb_offset)
 			bcb_recovery_msg = BCB_MSG_RECOVERY_WIPE;
 		}else{
 			bcb_recovery_msg = BCB_MSG_RECOVERY_NONE;
-#endif
 		}
+#endif
 	}
 
 	free(bmsg);
