@@ -13,6 +13,7 @@
 #include <lzma/LzmaTools.h>
 #include <optee_include/OpteeClientInterface.h>
 #include <optee_include/tee_api_defines.h>
+#include <asm/arch/rk_atags.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -89,15 +90,8 @@ static int fit_decomp_image(void *fit, int node, ulong *load_addr,
 	if (comp == IH_COMP_LZMA) {
 #if CONFIG_IS_ENABLED(LZMA)
 		SizeT lzma_len = ALIGN(len, FIT_MAX_SPL_IMAGE_SZ);
-		SizeT src_lenp;
-		const fdt32_t *val;
-
-		val = fdt_getprop(fit, node, "raw-size", NULL);
-		if (!val)
-			return -ENOENT;
-		src_lenp = fdt32_to_cpu(*val);
 		ret = lzmaBuffToBuffDecompress((uchar *)(*load_addr), &lzma_len,
-					       (uchar *)(*src_addr), src_lenp);
+					       (uchar *)(*src_addr), *src_len);
 		len = lzma_len;
 #endif
 	} else if (comp == IH_COMP_GZIP) {
@@ -219,7 +213,7 @@ int fit_board_verify_required_sigs(void)
 	vboot = (vboot == 0xff);
 #endif
 #else /* !CONFIG_SPL_BUILD */
-#ifdef CONFIG_OPTEE_CLIENT
+#if defined(CONFIG_OPTEE_CLIENT)
 	int ret;
 
 	ret = trusty_read_vbootkey_enable_flag(&vboot);
@@ -227,6 +221,12 @@ int fit_board_verify_required_sigs(void)
 		printf("Can't read verified-boot flag, ret=%d\n", ret);
 		return 1;
 	}
+#elif defined(CONFIG_ROCKCHIP_PRELOADER_ATAGS)
+	struct tag *t;
+
+	t = atags_get_tag(ATAG_PUB_KEY);
+	if (t && t->u.pub_key.flag == PUBKEY_FUSE_PROGRAMMED)
+		vboot = 1;
 #endif
 #endif /* CONFIG_SPL_BUILD*/
 
