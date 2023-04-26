@@ -474,16 +474,16 @@ static int display_get_force_timing_from_dts(ofnode node, struct drm_display_mod
 
 	if (ret) {
 		mode->clock = 74250;
-		mode->flags = 0x5;
+		mode->flags = 0x6;
 		mode->hdisplay = 1280;
-		mode->hsync_start = 1390;
-		mode->hsync_end = 1430;
-		mode->htotal = 1650;
+		mode->hsync_start = 1352;
+		mode->hsync_end = 1480;
+		mode->htotal = 1680;
 		mode->hskew = 0;
-		mode->vdisplay = 720;
-		mode->vsync_start = 725;
-		mode->vsync_end = 730;
-		mode->vtotal = 750;
+		mode->vdisplay = 800;
+		mode->vsync_start = 803;
+		mode->vsync_end = 809;
+		mode->vtotal = 831;
 		mode->vrefresh = 60;
 		mode->picture_aspect_ratio = HDMI_PICTURE_ASPECT_16_9;
 		mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
