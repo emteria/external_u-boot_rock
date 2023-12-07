@@ -832,7 +832,7 @@ static int dw_mipi_dsi2_connector_init(struct rockchip_connector *conn, struct d
 			return phy->funcs->init(phy);
 	}
 
-	dw_mipi_dsi2_get_dsc_params_from_sink(dsi2);
+	/*dw_mipi_dsi2_get_dsc_params_from_sink(dsi2);*/
 
 	if (dm_gpio_is_valid(&dsi2->te_gpio)) {
 		cstate->soft_te = true;
@@ -1286,6 +1286,7 @@ static int dw_mipi_dsi2_host_attach(struct mipi_dsi_host *host,
 	dsi2->format = device->format;
 	dsi2->mode_flags = device->mode_flags;
 	dsi2->device = device;
+	dw_mipi_dsi2_get_dsc_params_from_sink(dsi2);
 
 	return 0;
 }
