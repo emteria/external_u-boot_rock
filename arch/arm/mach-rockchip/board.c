@@ -50,6 +50,7 @@
 #include <asm/arch/resource_img.h>
 #include <asm/arch/rk_atags.h>
 #include <asm/arch/vendor.h>
+#include "../drivers/misc/radxa-i2c-eeprom.h"
 #ifdef CONFIG_ROCKCHIP_EINK_DISPLAY
 #include <rk_eink.h>
 #endif
@@ -100,6 +101,11 @@ static int rockchip_set_ethaddr(void)
 	char buf[ARP_HLEN_ASCII + 1], mac[16];
 	u8 ethaddr[ARP_HLEN * MAX_ETHERNET] = {0};
 	int i, ret = -EINVAL;
+
+#ifdef CONFIG_RADXA_ID_EEPROM	
+	if(mac_read_from_eeprom());
+	return 0;
+#endif
 
 #ifdef CONFIG_ROCKCHIP_VENDOR_PARTITION
 	ret = vendor_storage_read(LAN_MAC_ID, ethaddr, sizeof(ethaddr));
