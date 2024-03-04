@@ -70,11 +70,6 @@ __weak int rk_board_fdt_fixup(void *blob)
 	return 0;
 }
 
-__weak int rk_board_dm_fdt_fixup(void *blob)
-{
-	return 0;
-}
-
 __weak int soc_clk_dump(void)
 {
 	return 0;
@@ -559,12 +554,6 @@ int interrupt_debugger_init(void)
 
 int board_fdt_fixup(void *blob)
 {
-	/*
-	 * Device's platdata points to orignal fdt blob property,
-	 * access DM device before any fdt fixup.
-	 */
-	rk_board_dm_fdt_fixup(blob);
-
 	/* Common fixup for DRM */
 #ifdef CONFIG_DRM_ROCKCHIP
 	rockchip_display_fixup(blob);
