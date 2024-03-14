@@ -99,6 +99,7 @@ __weak int rk_board_init(void)
 
 static int rockchip_set_ethaddr(void)
 {
+	return 0;
 	__maybe_unused bool need_write = false;
 	bool randomed = false;
 	char buf[ARP_HLEN_ASCII + 1], mac[16];
