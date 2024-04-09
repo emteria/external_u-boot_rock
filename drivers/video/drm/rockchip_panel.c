@@ -19,14 +19,6 @@
 #include <dm/uclass-id.h>
 #include <linux/media-bus-format.h>
 #include <power/regulator.h>
-#include <asm/arch/boot_mode.h>
-#include <boot_rkimg.h>
-
-#include <linux/err.h>
-#include <asm/arch/cpu.h>
-#include <fdtdec.h>
-#include <linux/libfdt.h>
-
 
 #include "rockchip_display.h"
 #include "rockchip_crtc.h"
@@ -74,85 +66,12 @@ struct rockchip_panel_priv {
 	struct udevice *backlight;
 	struct gpio_desc enable_gpio;
 	struct gpio_desc reset_gpio;
-	struct gpio_desc uboot_ir_gpio;
 
 	int cmd_type;
 	struct gpio_desc spi_sdi_gpio;
 	struct gpio_desc spi_scl_gpio;
 	struct gpio_desc spi_cs_gpio;
 };
-
-//////////////////////////////////////////////////////////////////
-//udelay(1000);
-#define CPU_MCU_DE2_REG   0xfdd60000
-#define CPU_MCU_DE2_REG_D   0xfdd60008
-#define IR_9MS_HEAD_LOW      9000
-#define IR_4_5MS_HEAD_HIGH   4500
-#define IR_560US             560
-//#define IR_GPIO_PORT         GPIO_BANK4|GPIO_D3
-#define IR_H                 1
-#define IR_L                 0
-extern int elc_mcu_boot_mode;
-//void rk_ir_report(unsigned long value)
-void rk_ir_report(unsigned long value,struct rockchip_panel_priv *priv)
-{
-	int i=0,j=0;
-	unsigned long n=0x80000000;	
-    printf("=============elc_macjordan_rk_ir_report0============\n");
-	//gpio_direction_output(IR_GPIO_PORT,IR_H);
-	//dm_gpio_set_value(&priv->uboot_ir_gpio, IR_H);
-	writel((readl(CPU_MCU_DE2_REG)|0xffff0001),CPU_MCU_DE2_REG); //set 1 by rocky
-	mdelay(100);
-
-	//HEAD NEC
-	//gpio_direction_output(IR_GPIO_PORT,IR_L);
-	//dm_gpio_set_value(&priv->uboot_ir_gpio, IR_L);
-	writel(((readl(CPU_MCU_DE2_REG)|0xffff0000)&0xfffffffe),CPU_MCU_DE2_REG); //set 0 by rocky
-	udelay(IR_9MS_HEAD_LOW);
-	//gpio_direction_output(IR_GPIO_PORT,IR_H);
-	//dm_gpio_set_value(&priv->uboot_ir_gpio, IR_H);
-	writel((readl(CPU_MCU_DE2_REG)|0xffff0001),CPU_MCU_DE2_REG); //set 1 by rocky
-	udelay(IR_4_5MS_HEAD_HIGH);
-
-    //CUSTOMER NEC
-	for(j=0;j<4;j++)
-	{
-		for( i=0;i<8;i++ )
-		{
-			//gpio_direction_output(IR_GPIO_PORT,IR_L);
-			//dm_gpio_set_value(&priv->uboot_ir_gpio, IR_L);
-			writel(((readl(CPU_MCU_DE2_REG)|0xffff0000)&0xfffffffe),CPU_MCU_DE2_REG); //set 0 by rocky
-			udelay(IR_560US);
-
-			if(value&n){
-				//gpio_direction_output(IR_GPIO_PORT,IR_H);
-				//dm_gpio_set_value(&priv->uboot_ir_gpio, IR_H);
-				writel((readl(CPU_MCU_DE2_REG)|0xffff0001),CPU_MCU_DE2_REG); //set 1 by rocky
-				udelay(IR_560US);
-				udelay(IR_560US);
-				udelay(IR_560US);
-			}
-			else{
-				//gpio_direction_output(IR_GPIO_PORT,IR_H);
-				//dm_gpio_set_value(&priv->uboot_ir_gpio, IR_H);
-				writel((readl(CPU_MCU_DE2_REG)|0xffff0001),CPU_MCU_DE2_REG); //set 1 by rocky
-				udelay(IR_560US);
-			}
-			n >>= 1;
-		}
-	}
-	//gpio_direction_output(IR_GPIO_PORT,IR_L);
-	//dm_gpio_set_value(&priv->uboot_ir_gpio, IR_L);
-	writel(((readl(CPU_MCU_DE2_REG)|0xffff0000)&0xfffffffe),CPU_MCU_DE2_REG); //set 0 by rocky
-	udelay(IR_560US);
-	
-	//gpio_direction_output(IR_GPIO_PORT,IR_H);
-	//dm_gpio_set_value(&priv->uboot_ir_gpio, IR_H);
-	writel((readl(CPU_MCU_DE2_REG)|0xffff0001),CPU_MCU_DE2_REG); //set 1 by rocky
-	mdelay(100);
-    printf("=============elc_macjordan_rk_ir_report1============\n");
-}
-//////////////////////////////////////////////////////////////////
 
 static inline int get_panel_cmd_type(const char *s)
 {
@@ -341,7 +260,7 @@ static void panel_simple_prepare(struct rockchip_panel *panel)
 	struct rockchip_panel_priv *priv = dev_get_priv(panel->dev);
 	struct mipi_dsi_device *dsi = dev_get_parent_platdata(panel->dev);
 	int ret;
-	printf("##########rocky####panel_simple_prepare#####\n");
+
 	if (priv->prepared)
 		return;
 
@@ -424,7 +343,7 @@ static void panel_simple_enable(struct rockchip_panel *panel)
 {
 	struct rockchip_panel_plat *plat = dev_get_platdata(panel->dev);
 	struct rockchip_panel_priv *priv = dev_get_priv(panel->dev);
-	printf("##########rocky####panel_simple_enable#####\n");
+
 	if (priv->enabled)
 		return;
 
@@ -458,45 +377,7 @@ static void panel_simple_init(struct rockchip_panel *panel)
 {
 	struct display_state *state = panel->state;
 	struct connector_state *conn_state = &state->conn_state;
-	
-	printf("##########rocky####panel_simple_init#####\n");
-	#if 1
-	struct rockchip_panel_priv *priv = dev_get_priv(panel->dev);
-	printf("=============elc uboot mcu NEC poweroff  START============\n");
-	printf("##########rocky####panel_simple_init#####elc_mcu_boot_mode =%d\n",elc_mcu_boot_mode);
-	//dm_gpio_set_value(&priv->uboot_ir_gpio, IR_H);
-	writel((readl(CPU_MCU_DE2_REG_D)|0xffff0001),CPU_MCU_DE2_REG_D); //set output	
-	writel((readl(CPU_MCU_DE2_REG)|0xffff0001),CPU_MCU_DE2_REG); //set 1 by rocky
-	
-	if(elc_mcu_boot_mode==BOOT_MODE_CHARGING){
-		rk_ir_report(0x11111111,priv);
-		printf("=============elc uboot mcu NEC charging->poweroff  ============\n");		
-	}
-	
-	#if 0
-	printf("=============################ NEC TEST  ============\n");
-	//writel((readl(CPU_MCU_DE2_REG_D)|0xffff0001),CPU_MCU_DE2_REG_D); //set output
-	
-	writel((readl(CPU_MCU_DE2_REG)|0xffff0001),CPU_MCU_DE2_REG); //set 1 by rocky
-	mdelay(100);
-	writel(((readl(CPU_MCU_DE2_REG)|0xffff0000)&0xfffffffe),CPU_MCU_DE2_REG); //set 0	
-	mdelay(100);
-	writel((readl(CPU_MCU_DE2_REG)|0xffff0001),CPU_MCU_DE2_REG); //set 1 by rocky
-	mdelay(100);
-	writel(((readl(CPU_MCU_DE2_REG)|0xffff0000)&0xfffffffe),CPU_MCU_DE2_REG); //set 0	
-	mdelay(100);
-	#endif
-    /*
-	#if 0
-	rk_ir_report(0x00000000,priv);
-	mdelay(5000);	
-	rk_ir_report(0x11111111,priv);	
-	mdelay(5000);		
-	rk_ir_report(0x22222222,priv);
-	#endif
-	*/
-	printf("=============elc uboot mcu NEC poweroff  END============\n");
-	#endif
+
 	conn_state->bus_format = panel->bus_format;
 }
 
@@ -514,7 +395,7 @@ static int rockchip_panel_ofdata_to_platdata(struct udevice *dev)
 	const void *data;
 	int len = 0;
 	int ret;
-	printf("##########rocky####rockchip_panel_ofdata_to_platdata#####\n");
+
 	plat->power_invert = dev_read_bool(dev, "power-invert");
 
 	plat->delay.prepare = dev_read_u32_default(dev, "prepare-delay-ms", 0);
@@ -579,14 +460,7 @@ static int rockchip_panel_probe(struct udevice *dev)
 		printf("%s: Cannot get enable GPIO: %d\n", __func__, ret);
 		return ret;
 	}
-	
-	ret = gpio_request_by_name(dev, "uboot-ir-gpios", 0,
-				   &priv->uboot_ir_gpio, GPIOD_IS_OUT);
-	if (ret && ret != -ENOENT) {
-		printf("%s: Cannot get enable GPIO: %d\n", __func__, ret);
-		return ret;
-	}
-	
+
 	ret = gpio_request_by_name(dev, "reset-gpios", 0,
 				   &priv->reset_gpio, GPIOD_IS_OUT);
 	if (ret && ret != -ENOENT) {

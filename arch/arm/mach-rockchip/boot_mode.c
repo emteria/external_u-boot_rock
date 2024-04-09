@@ -10,8 +10,6 @@
 #include <asm/io.h>
 #include <asm/arch/boot_mode.h>
 
-int elc_mcu_boot_mode=-1;//rocky
-
 DECLARE_GLOBAL_DATA_PTR;
 
 enum {
@@ -216,9 +214,6 @@ int rockchip_get_boot_mode(void)
 int setup_boot_mode(void)
 {
 	char env_preboot[256] = {0};
-
-	elc_mcu_boot_mode=rockchip_get_boot_mode();//rocky
-	printf("##########rocky####setup_boot_mode#####elc_mcu_boot_mode =%d\n",elc_mcu_boot_mode);
 
 	switch (rockchip_get_boot_mode()) {
 	case BOOT_MODE_BOOTLOADER:
