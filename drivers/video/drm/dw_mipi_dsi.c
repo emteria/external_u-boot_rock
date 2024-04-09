@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <asm/unaligned.h>
 #include <asm/io.h>
+#include <asm/gpio.h>//rocky
 #include <asm/hardware.h>
 #include <dm/device.h>
 #include <dm/read.h>
@@ -185,8 +186,8 @@
 #define DSI_INT_MSK0			0xc4
 #define DSI_INT_MSK1			0xc8
 
-#define PHY_STATUS_TIMEOUT_US		10000
-#define CMD_PKT_STATUS_TIMEOUT_US	20000
+#define PHY_STATUS_TIMEOUT_US		100000//rocky
+#define CMD_PKT_STATUS_TIMEOUT_US	200000//rocky
 
 /* Test Code: 0x44 (HS RX Control of Lane 0) */
 #define HSFREQRANGE(x)			UPDATE(x, 6, 1)
@@ -234,6 +235,8 @@ struct dw_mipi_dsi {
 	void *base;
 	void *grf;
 	int id;
+	struct gpio_desc reset_gpio;//rocky
+	struct gpio_desc enable_gpio;
 	struct dw_mipi_dsi *master;
 	struct dw_mipi_dsi *slave;
 	bool prepared;
@@ -469,7 +472,7 @@ static int mipi_dphy_power_on(struct dw_mipi_dsi *dsi)
 	mdelay(2);
 
 	if (dsi->dphy.phy) {
-		rockchip_phy_set_mode(dsi->dphy.phy, PHY_MODE_MIPI_DPHY);
+		rockchip_phy_set_mode(dsi->dphy.phy, PHY_MODE_VIDEO_MIPI);
 		rockchip_phy_power_on(dsi->dphy.phy);
 	}
 
@@ -723,7 +726,8 @@ static ssize_t dw_mipi_dsi_transfer(struct dw_mipi_dsi *dsi,
 
 	if (msg->flags & MIPI_DSI_MSG_USE_LPM) {
 		dsi_update_bits(dsi, DSI_VID_MODE_CFG, LP_CMD_EN, LP_CMD_EN);
-		dsi_update_bits(dsi, DSI_LPCLK_CTRL, PHY_TXREQUESTCLKHS, 0);
+		//dsi_update_bits(dsi, DSI_LPCLK_CTRL, PHY_TXREQUESTCLKHS, 0);
+                dsi_update_bits(dsi, DSI_LPCLK_CTRL, PHY_TXREQUESTCLKHS, PHY_TXREQUESTCLKHS);
 	} else {
 		dsi_update_bits(dsi, DSI_VID_MODE_CFG, LP_CMD_EN, 0);
 		dsi_update_bits(dsi, DSI_LPCLK_CTRL,
@@ -927,6 +931,32 @@ static void dw_mipi_dsi_disable(struct dw_mipi_dsi *dsi)
 	if (dsi->slave)
 		dw_mipi_dsi_disable(dsi->slave);
 }
+
+//add by rocky for gm775 mipi to lvds--------
+static void rockchip_dsi_external_bridge_power_off(struct dw_mipi_dsi *dsi)
+{
+	if (dm_gpio_is_valid(&dsi->reset_gpio))
+		dm_gpio_set_value(&dsi->reset_gpio, 1);
+	if (dm_gpio_is_valid(&dsi->enable_gpio))
+		dm_gpio_set_value(&dsi->enable_gpio, 0);
+}
+
+static void rockchip_dsi_external_bridge_power_on(struct dw_mipi_dsi *dsi)
+{
+	if (dm_gpio_is_valid(&dsi->enable_gpio)){
+		dm_gpio_set_value(&dsi->enable_gpio, 1);
+		mdelay(1);
+	}
+
+	if (dm_gpio_is_valid(&dsi->reset_gpio)){
+		dm_gpio_set_value(&dsi->reset_gpio, 1);
+		mdelay(1);
+		dm_gpio_set_value(&dsi->reset_gpio, 0);
+		mdelay(1);
+		dm_gpio_set_value(&dsi->reset_gpio, 1);
+	}
+}
+//add by rocky for gm775 mipi to lvds--------
 
 static void dw_mipi_dsi_post_disable(struct dw_mipi_dsi *dsi)
 {
@@ -1254,7 +1284,7 @@ static void dw_mipi_dsi_pre_enable(struct dw_mipi_dsi *dsi)
 
 	if (dsi->master)
 		dw_mipi_dsi_pre_enable(dsi->master);
-
+	rockchip_dsi_external_bridge_power_on(dsi);//rocky
 	dw_mipi_dsi_host_init(dsi);
 	mipi_dphy_init(dsi);
 	mipi_dphy_power_on(dsi);
@@ -1320,7 +1350,7 @@ static int dw_mipi_dsi_connector_disable(struct display_state *state)
 {
 	struct connector_state *conn_state = &state->conn_state;
 	struct dw_mipi_dsi *dsi = dev_get_priv(conn_state->dev);
-
+	rockchip_dsi_external_bridge_power_off(dsi);//rocky
 	dw_mipi_dsi_disable(dsi);
 
 	return 0;
@@ -1342,12 +1372,27 @@ static int dw_mipi_dsi_probe(struct udevice *dev)
 		(const struct rockchip_connector *)dev_get_driver_data(dev);
 	const struct dw_mipi_dsi_plat_data *pdata = connector->data;
 	int id;
-
+	int ret=0;//rocky
 	dsi->base = dev_read_addr_ptr(dev);
 	dsi->grf = syscon_get_first_range(ROCKCHIP_SYSCON_GRF);
 	if (IS_ERR(dsi->grf))
 		return PTR_ERR(dsi->grf);
+	//add by rocky for gm775 mipi to lvds--------
+	ret = gpio_request_by_name(dev, "enable-gpios", 0,
+				   &dsi->enable_gpio, GPIOD_IS_OUT);
+	if (ret && ret != -ENOENT) {
+		printf("%s: Cannot get enable GPIO: %d\n", __func__, ret);
+		return ret;
+	}
+ 
+	ret = gpio_request_by_name(dev, "reset-gpios", 0,
+				   &dsi->reset_gpio, GPIOD_IS_OUT);
 
+	if (ret && ret != -ENOENT) {
+		printf("%s: Cannot get reset GPIO: %d\n", __func__, ret);
+		return ret;
+	}
+	//add by rocky for gm775 mipi to lvds--------
 	id = of_alias_get_id(ofnode_to_np(dev->node), "dsi");
 	if (id < 0)
 		id = 0;

@@ -1464,7 +1464,6 @@ static ulong rk3568_sdmmc_set_clk(struct rk3568_clk_priv *priv,
 
 	switch (rate) {
 	case OSC_HZ:
-	case 26 * MHz:
 		src_clk = CLK_SDMMC_SEL_24M;
 		break;
 	case 400 * MHz:
@@ -1684,51 +1683,6 @@ static ulong rk3568_emmc_set_clk(struct rk3568_clk_priv *priv, ulong rate)
 	return rk3568_emmc_get_clk(priv);
 }
 
-static ulong rk3568_emmc_get_bclk(struct rk3568_clk_priv *priv)
-{
-	struct rk3568_cru *cru = priv->cru;
-	u32 sel, con;
-
-	con = readl(&cru->clksel_con[28]);
-	sel = (con & BCLK_EMMC_SEL_MASK) >> BCLK_EMMC_SEL_SHIFT;
-	switch (sel) {
-	case BCLK_EMMC_SEL_200M:
-		return 200 * MHz;
-	case BCLK_EMMC_SEL_150M:
-		return 150 * MHz;
-	case BCLK_EMMC_SEL_125M:
-		return 125 * MHz;
-	default:
-		return -ENOENT;
-	}
-}
-
-static ulong rk3568_emmc_set_bclk(struct rk3568_clk_priv *priv, ulong rate)
-{
-	struct rk3568_cru *cru = priv->cru;
-	int src_clk;
-
-	switch (rate) {
-	case 200 * MHz:
-		src_clk = BCLK_EMMC_SEL_200M;
-		break;
-	case 150 * MHz:
-		src_clk = BCLK_EMMC_SEL_150M;
-		break;
-	case 125 * MHz:
-		src_clk = BCLK_EMMC_SEL_125M;
-		break;
-	default:
-		return -ENOENT;
-	}
-
-	rk_clrsetreg(&cru->clksel_con[28],
-		     BCLK_EMMC_SEL_MASK,
-		     src_clk << BCLK_EMMC_SEL_SHIFT);
-
-	return rk3568_emmc_get_bclk(priv);
-}
-
 #ifndef CONFIG_SPL_BUILD
 static ulong rk3568_aclk_vop_get_clk(struct rk3568_clk_priv *priv)
 {
@@ -1850,7 +1804,7 @@ static ulong rk3568_dclk_vop_set_clk(struct rk3568_clk_priv *priv,
 		rockchip_pll_set_rate(&rk3568_pll_clks[VPLL],
 				      priv->cru, VPLL, div * rate);
 	} else {
-		for (i = 0; i <= DCLK_VOP_SEL_CPLL; i++) {
+		for (i = DCLK_VOP_SEL_GPLL; i <= DCLK_VOP_SEL_CPLL; i++) {
 			switch (i) {
 			case DCLK_VOP_SEL_GPLL:
 				pll_rate = priv->gpll_hz;
@@ -1872,8 +1826,9 @@ static ulong rk3568_dclk_vop_set_clk(struct rk3568_clk_priv *priv,
 				best_div = div;
 				best_sel = i;
 			}
-			debug("p_rate=%lu, best_rate=%lu, div=%u, sel=%u\n",
+			printf("p_rate=%lu, best_rate=%lu, div=%u, sel=%u\n",
 			      pll_rate, best_rate, best_div, best_sel);
+			break;
 		}
 
 		if (best_rate) {
@@ -2589,12 +2544,6 @@ static ulong rk3568_clk_get_rate(struct clk *clk)
 	case CCLK_EMMC:
 		rate = rk3568_emmc_get_clk(priv);
 		break;
-	case BCLK_EMMC:
-		rate = rk3568_emmc_get_bclk(priv);
-		break;
-	case TCLK_EMMC:
-		rate = OSC_HZ;
-		break;
 #ifndef CONFIG_SPL_BUILD
 	case ACLK_VOP:
 		rate = rk3568_aclk_vop_get_clk(priv);
@@ -2774,12 +2723,6 @@ static ulong rk3568_clk_set_rate(struct clk *clk, ulong rate)
 		break;
 	case CCLK_EMMC:
 		ret = rk3568_emmc_set_clk(priv, rate);
-		break;
-	case BCLK_EMMC:
-		ret = rk3568_emmc_set_bclk(priv, rate);
-		break;
-	case TCLK_EMMC:
-		ret = OSC_HZ;
 		break;
 #ifndef CONFIG_SPL_BUILD
 	case ACLK_VOP:
@@ -3107,6 +3050,12 @@ static int __maybe_unused rk3568_dclk_vop_set_parent(struct clk *clk,
 	if (parent->id == PLL_VPLL) {
 		rk_clrsetreg(&cru->clksel_con[con_id], DCLK0_VOP_SEL_MASK,
 			     DCLK_VOP_SEL_VPLL << DCLK0_VOP_SEL_SHIFT);
+	}else if (parent->id == PLL_GPLL) {
+		rk_clrsetreg(&cru->clksel_con[con_id], DCLK0_VOP_SEL_MASK,
+			     DCLK_VOP_SEL_GPLL << DCLK0_VOP_SEL_SHIFT);
+	}else if (parent->id == PLL_CPLL) {
+		rk_clrsetreg(&cru->clksel_con[con_id], DCLK0_VOP_SEL_MASK,
+			     DCLK_VOP_SEL_CPLL << DCLK0_VOP_SEL_SHIFT);
 	} else {
 		rk_clrsetreg(&cru->clksel_con[con_id], DCLK0_VOP_SEL_MASK,
 			     DCLK_VOP_SEL_HPLL << DCLK0_VOP_SEL_SHIFT);

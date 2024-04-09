@@ -72,7 +72,7 @@ static uint rockchip_dwmmc_get_mmc_clk(struct dwmci_host *host, uint freq)
 	ret = clk_set_rate(&priv->clk, freq);
 	if (ret < 0) {
 		debug("%s: err=%d\n", __func__, ret);
-		return 0;
+		return ret;
 	}
 
 	return freq;
@@ -122,7 +122,6 @@ static int rockchip_dwmmc_ofdata_to_platdata(struct udevice *dev)
 	return 0;
 }
 
-#ifndef CONFIG_MMC_SIMPLE
 static int rockchip_dwmmc_execute_tuning(struct dwmci_host *host, u32 opcode)
 {
 	int i = 0;
@@ -168,9 +167,6 @@ static int rockchip_dwmmc_execute_tuning(struct dwmci_host *host, u32 opcode)
 
 	return ret;
 }
-#else
-static int rockchip_dwmmc_execute_tuning(struct dwmci_host *host, u32 opcode) { return 0; }
-#endif
 
 static int rockchip_dwmmc_probe(struct udevice *dev)
 {
@@ -239,14 +235,6 @@ static int rockchip_dwmmc_probe(struct udevice *dev)
 		plat->cfg.host_caps |= MMC_MODE_HS200;
 	plat->mmc.default_phase =
 		dev_read_u32_default(dev, "default-sample-phase", 0);
-#ifdef CONFIG_ROCKCHIP_RV1106
-	if (!(ret < 0) && (&priv->sample_clk)) {
-		ret = clk_set_phase(&priv->sample_clk, plat->mmc.default_phase);
-		if (ret < 0)
-			debug("MMC: can not set default phase!\n");
-	}
-#endif
-
 	plat->mmc.init_retry = 0;
 	host->mmc = &plat->mmc;
 	host->mmc->priv = &priv->host;

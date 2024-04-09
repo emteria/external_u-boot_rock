@@ -137,6 +137,9 @@ static int rockchip_decom_start(struct udevice *dev, void *buf)
 	writel(limit_lo, priv->base + DECOM_LMTSL);
 	writel(limit_hi, priv->base + DECOM_LMTSH);
 
+#if defined(CONFIG_SPL_BUILD)
+	writel(DECOM_INT_MASK, priv->base + DECOM_IEN);
+#endif
 	writel(DECOM_ENABLE, priv->base + DECOM_ENR);
 
 	priv->idle_check_once = true;
@@ -169,7 +172,7 @@ static int rockchip_decom_done_poll(struct udevice *dev)
 
 static int rockchip_decom_capability(u32 *buf)
 {
-	*buf = DECOM_GZIP | DECOM_LZ4;
+	*buf = DECOM_GZIP;
 
 	return 0;
 }
@@ -247,7 +250,7 @@ static int rockchip_decom_probe(struct udevice *dev)
 	}
 #endif
 
-	ret = clk_get_by_index(dev, 1, &priv->dclk);
+	ret = clk_get_by_name(dev, "dclk", &priv->dclk);
 	if (ret < 0)
 		return ret;
 
