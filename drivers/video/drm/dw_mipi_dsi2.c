@@ -600,6 +600,15 @@ static void dw_mipi_dsi2_set_vid_mode(struct dw_mipi_dsi2 *dsi2)
 {
 	u32 val = 0, mode;
 	int ret;
+	u32 sys_clk = SYS_CLK / USEC_PER_SEC;
+	u32 esc_clk_div;
+	
+
+	/* The Escape clock ranges from 1MHz to 20MHz. */
+	esc_clk_div = DIV_ROUND_UP(sys_clk, 20 * 2);
+	val |= PHY_LPTX_CLK_DIV(esc_clk_div);
+
+	dsi_write(dsi2, DSI2_PHY_CLK_CFG, val);
 
 	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_HFP)
 		val |= BLK_HFP_HS_EN;
@@ -954,7 +963,7 @@ static void dw_mipi_dsi2_phy_clk_mode_cfg(struct dw_mipi_dsi2 *dsi2)
 	u32 esc_clk_div;
 	u32 val = 0;
 
-	if (dsi2->mode_flags & MIPI_DSI_CLOCK_NON_CONTINUOUS)
+	// if (dsi2->mode_flags & MIPI_DSI_CLOCK_NON_CONTINUOUS)
 		val |= NON_CONTINUOUS_CLK;
 
 	/* The Escape clock ranges from 1MHz to 20MHz. */
