@@ -561,6 +561,7 @@ static int dtb_scan(void *fdt, int where)
 	return -EINVAL;
 }
 
+extern int radxa_display_overlay(const void *blob);
 int rockchip_read_dtb_file(void *fdt)
 {
 	int locate, ret;
@@ -587,6 +588,7 @@ int rockchip_read_dtb_file(void *fdt)
 #if defined(CONFIG_ANDROID_BOOT_IMAGE) && defined(CONFIG_OF_LIBFDT_OVERLAY)
 	android_fdt_overlay_apply((void *)fdt);
 #endif
+	radxa_display_overlay(fdt);
 
 	return 0;
 }
