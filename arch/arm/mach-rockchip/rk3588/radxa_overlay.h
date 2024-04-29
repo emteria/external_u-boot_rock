@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <linux/libfdt.h>
 #include <fdt_support.h>
+#include <boot_rkimg.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -157,6 +158,11 @@ DECLARE_GLOBAL_DATA_PTR;
 #define DSI_PANEL3                      "raspits,tc358762-7inch"
 #define DSI_PANEL4                      "raspits,tc358762-5inch"
 
+/*
+ * When the SD card is started, this node will affect the kernel vendor driver's use of the emmc device,
+ * causing the SD card overlay data to be unable to be saved.
+*/
+#define EMMC_PATH		"/mmc@fe2e0000"
 
 #define SCREEN_TYPE         10
 

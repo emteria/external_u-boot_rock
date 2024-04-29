@@ -2,7 +2,7 @@
 
 struct overlay_info overlay_info;
 
-static int level = 1;
+static int level = 0;
 #define DBG(format,...) \
     do { \
         if (level > 0) { \
@@ -41,7 +41,7 @@ int radxa_read_screen_info(const void *blob)
 			overlay_info.screen_info[i].id = buffer[j++] - '0';
 			overlay_info.screen_info[i].vop = buffer[j++] - '0';
 			overlay_info.screen_info[i].enable = buffer[j++] - '0';
-			DBG("screen_info type=%d id=%d vop =%d enable=%d \n",\
+			printf("screen_info type=%d id=%d vop =%d enable=%d \n",\
 				overlay_info.screen_info[i].type, \
 				overlay_info.screen_info[i].id,	\
 				overlay_info.screen_info[i].vop, \
@@ -519,6 +519,15 @@ int radxa_display_overlay(const void *blob)
 {
 	int ret;
 	DBG("%s\n",__func__);
+
+	struct blk_desc *dev_desc;
+	dev_desc = rockchip_get_bootdev();
+	if (!dev_desc) {
+		printf("%s: dev_desc is NULL!\n", __func__);
+		return -ENODEV;
+	}
+
+	printf("%s...%d:%d\n",__func__,dev_desc->if_type,dev_desc->devnum);
 
 	ret = radxa_read_screen_info(blob);
 	if(ret < 0)
