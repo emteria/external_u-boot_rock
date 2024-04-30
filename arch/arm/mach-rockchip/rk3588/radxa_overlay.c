@@ -155,13 +155,32 @@ void radxa_fdt_select_panel(const void *blob,struct screen_info screen_info)
 					printf("Failed to set compatible DSI_PANEL3\n");
 					return;
 				}
-				radxa_fdt_set_panel_clk(fdt,DSI0_NODE_FDT_PATH,605);
+				radxa_fdt_set_panel_clk(fdt,DSI0_NODE_FDT_PATH,DSI_CLK_605);
 			}else if (screen_info.id == 4){
 				if (fdt_setprop(fdt, nodeoffset, "compatible", DSI_PANEL4, strlen(DSI_PANEL4) + 1) < 0){
 					printf("Failed to set compatible DSI_PANEL4\n");
 					return;
 				}
-				radxa_fdt_set_panel_clk(fdt,DSI0_NODE_FDT_PATH,605);
+				radxa_fdt_set_panel_clk(fdt,DSI0_NODE_FDT_PATH,DSI_CLK_605);
+			}else if (screen_info.id == 5){
+				if (fdt_setprop(fdt, nodeoffset, "compatible", DSI_PANEL5, strlen(DSI_PANEL5) + 1) < 0){
+					printf("Failed to set compatible DSI_PANEL5\n");
+					return;
+				}
+				radxa_fdt_set_panel_clk(fdt,DSI0_NODE_FDT_PATH,DSI_CLK_605);
+			}
+
+			if(screen_info.id < 3){//radxa  panel
+				radxa_fdt_status_disabled(fdt,DSI0_I2C6_RP_FT_TOUCH);
+				if (screen_info.id == 0){
+					nodeoffset = fdt_path_offset(fdt,DSI0_I2C6_RADXA_GT_TOUCH);
+					fdt_setprop_u32((char*)fdt, nodeoffset, GT_TOUCH_SIZE, GT_TOUCH_9112);
+				}else if(screen_info.id == 2){
+					nodeoffset = fdt_path_offset(fdt,DSI0_I2C6_RADXA_GT_TOUCH);
+					fdt_setprop_u32((char*)fdt, nodeoffset, GT_TOUCH_SIZE, GT_TOUCH_9271);
+				}
+			}else if(screen_info.id >= 3 && screen_info.id < 6){ //raspberrypi panel
+				radxa_fdt_status_disabled(fdt,DSI0_I2C6_RADXA_FT_TOUCH);
 			}
 
 		} else if(screen_info.type == RADXA_CONNECTOR_DSI1) {
@@ -194,13 +213,32 @@ void radxa_fdt_select_panel(const void *blob,struct screen_info screen_info)
 					printf("Failed to set compatible DSI_PANEL3\n");
 					return;
 				}
-				radxa_fdt_set_panel_clk(fdt,DSI1_NODE_FDT_PATH,DSI_CLK_200);
+				radxa_fdt_set_panel_clk(fdt,DSI1_NODE_FDT_PATH,DSI_CLK_605);
 			}else if (screen_info.id == 4){
 				if (fdt_setprop(fdt, nodeoffset, "compatible", DSI_PANEL4, strlen(DSI_PANEL4) + 1) < 0){
 					printf("Failed to set compatible DSI_PANEL4\n");
 					return;
 				}
-				radxa_fdt_set_panel_clk(fdt,DSI1_NODE_FDT_PATH,DSI_CLK_200);
+				radxa_fdt_set_panel_clk(fdt,DSI1_NODE_FDT_PATH,DSI_CLK_605);
+			}else if (screen_info.id == 5){
+				if (fdt_setprop(fdt, nodeoffset, "compatible", DSI_PANEL5, strlen(DSI_PANEL5) + 1) < 0){
+					printf("Failed to set compatible DSI_PANEL5\n");
+					return;
+				}
+				radxa_fdt_set_panel_clk(fdt,DSI1_NODE_FDT_PATH,DSI_CLK_605);
+			}
+
+			if(screen_info.id < 3){//radxa  panel
+				radxa_fdt_status_disabled(blob,DSI1_I2C8_RP_FT_TOUCH);
+				if (screen_info.id == 0){
+					nodeoffset = fdt_path_offset(fdt,DSI1_I2C8_RADXA_GT_TOUCH);
+					fdt_setprop_u32((char*)fdt, nodeoffset, GT_TOUCH_SIZE, GT_TOUCH_9112);
+				}else if(screen_info.id == 2){
+					nodeoffset = fdt_path_offset(fdt,DSI1_I2C8_RADXA_GT_TOUCH);
+					fdt_setprop_u32((char*)fdt, nodeoffset, GT_TOUCH_SIZE, GT_TOUCH_9271);
+				}
+			}else if(screen_info.id >= 3 && screen_info.id < 6){ //raspberrypi panel
+				radxa_fdt_status_disabled(blob,DSI1_I2C8_RADXA_FT_TOUCH);
 			}
 		}
 	}

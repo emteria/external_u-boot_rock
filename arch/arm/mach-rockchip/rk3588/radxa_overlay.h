@@ -149,6 +149,7 @@ DECLARE_GLOBAL_DATA_PTR;
 #define DSI_CLK_RATE                    "rockchip,lane-rate"
 #define DSI_CLK_200                     200
 #define DSI_CLK_480                     480
+#define DSI_CLK_605                     605
 #define DSI_CLK_1000                    1000
 
 //panel
@@ -157,7 +158,20 @@ DECLARE_GLOBAL_DATA_PTR;
 #define DSI_PANEL2                      "radxa,display-10fhd"
 #define DSI_PANEL3                      "raspits,tc358762-7inch"
 #define DSI_PANEL4                      "raspits,tc358762-5inch"
+#define DSI_PANEL5                      "waveshare,icn6211-4.3inch"
 
+//touch path
+#define DSI0_I2C6_RP_FT_TOUCH				"/i2c@fec80000/focaltech-raspberrypi@38"
+#define DSI0_I2C6_RADXA_FT_TOUCH			"/i2c@fec80000/focaltech-radxa@38"
+#define DSI0_I2C6_RADXA_GT_TOUCH			"/i2c@fec80000/gt9xx@14"
+
+#define DSI1_I2C8_RP_FT_TOUCH				"/i2c@feca0000/focaltech-raspberrypi@38"
+#define DSI1_I2C8_RADXA_FT_TOUCH			"/i2c@feca0000/focaltech-radxa@38"
+#define DSI1_I2C8_RADXA_GT_TOUCH			"/i2c@feca0000/gt9xx@14"
+
+#define GT_TOUCH_SIZE						"tp-size"
+#define GT_TOUCH_9112						9112
+#define GT_TOUCH_9271						9271
 /*
  * When the SD card is started, this node will affect the kernel vendor driver's use of the emmc device,
  * causing the SD card overlay data to be unable to be saved.
@@ -182,4 +196,6 @@ struct overlay_info {
 };
 
 int radxa_display_overlay(const void *blob);
+void radxa_fdt_status_disabled(const void *blob,char *path);
+void radxa_fdt_status_okay(const void *blob,char *path);
 
