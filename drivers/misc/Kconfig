@@ -78,12 +78,6 @@ config ROCKCHIP_OTP
 	  This is a simple drive to dump specified values of Rockchip SoC
 	  from otp, such as cpu-leakage.
 
-config RADXA_ID_EEPROM
-	bool "Radxa eeprom Support"
-	depends on MISC
-	help
-	  This driver aims to dump specified values of eeprom. 
-
 config ROCKCHIP_HW_DECOMPRESS
 	bool "Rockchip HardWare Decompress Support"
 	depends on MISC_DECOMPRESS
