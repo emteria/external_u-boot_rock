@@ -164,11 +164,13 @@ DECLARE_GLOBAL_DATA_PTR;
 #define DSI0_I2C6_RP_FT_TOUCH				"/i2c@fec80000/focaltech-raspberrypi@38"
 #define DSI0_I2C6_RADXA_FT_TOUCH			"/i2c@fec80000/focaltech-radxa@38"
 #define DSI0_I2C6_RADXA_GT_TOUCH			"/i2c@fec80000/gt9xx@14"
-
 #define DSI0_I2C5_RP_FT_TOUCH				"/i2c@fead0000/focaltech-raspberrypi@38"
 #define DSI0_I2C5_RADXA_FT_TOUCH			"/i2c@fead0000/focaltech-radxa@38"
 #define DSI0_I2C5_RADXA_GT_TOUCH			"/i2c@fead0000/gt9xx@14"
 
+#define DSI1_I2C6_RP_FT_TOUCH				"/i2c@fec80000/focaltech-raspberrypi@38"
+#define DSI1_I2C6_RADXA_FT_TOUCH			"/i2c@fec80000/focaltech-radxa@38"
+#define DSI1_I2C6_RADXA_GT_TOUCH			"/i2c@fec80000/gt9xx@14"
 #define DSI1_I2C8_RP_FT_TOUCH				"/i2c@feca0000/focaltech-raspberrypi@38"
 #define DSI1_I2C8_RADXA_FT_TOUCH			"/i2c@feca0000/focaltech-radxa@38"
 #define DSI1_I2C8_RADXA_GT_TOUCH			"/i2c@feca0000/gt9xx@14"
