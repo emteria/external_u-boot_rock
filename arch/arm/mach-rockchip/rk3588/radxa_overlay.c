@@ -510,7 +510,7 @@ int radxa_fdt_fixup_screen(const void *blob)
 					} else {
 						if(overlay_info.screen_info[i].enable == FALSE){
 							radxa_fdt_status_disabled(blob,DSI0_NODE_FDT_PATH);
-							radxa_fdt_status_disabled(blob,DSI0_PHY_NODE_FDT_PATH);
+							// radxa_fdt_status_disabled(blob,DSI0_PHY_NODE_FDT_PATH);
 							radxa_fdt_status_disabled(blob,DSI0_IN_VP2_NODE_FDT_PATH);
 							radxa_fdt_status_disabled(blob,DSI0_IN_VP3_NODE_FDT_PATH);
 							radxa_fdt_status_disabled(blob,DSI0_LOGO_ROUTE_FDT_PATH);
@@ -537,7 +537,7 @@ int radxa_fdt_fixup_screen(const void *blob)
 					} else {
 						if(overlay_info.screen_info[i].enable == FALSE){
 							radxa_fdt_status_disabled(blob,DSI1_NODE_FDT_PATH);
-							radxa_fdt_status_disabled(blob,DSI1_PHY_NODE_FDT_PATH);
+							// radxa_fdt_status_disabled(blob,DSI1_PHY_NODE_FDT_PATH);
 							radxa_fdt_status_disabled(blob,DSI1_IN_VP2_NODE_FDT_PATH);
 							radxa_fdt_status_disabled(blob,DSI1_IN_VP3_NODE_FDT_PATH);
 							radxa_fdt_status_disabled(blob,DSI1_LOGO_ROUTE_FDT_PATH);
