@@ -40,6 +40,9 @@ static int misc_require_recovery(u32 bcb_offset, int *bcb_recovery_msg)
 	bmsg = memalign(ARCH_DMA_MINALIGN, cnt * dev_desc->blksz);
 	if (blk_dread(dev_desc, part.start + bcb_offset, cnt, bmsg) != cnt) {
 		recovery = 0;
+#ifdef CONFIG_RADXA // radxa customization
+		*bcb_recovery_msg = BCB_MSG_RECOVERY_NONE;
+#endif
 	} else {
 		recovery = !strcmp(bmsg->command, "boot-recovery");
 		if (bcb_recovery_msg) {
@@ -48,6 +51,13 @@ static int misc_require_recovery(u32 bcb_offset, int *bcb_recovery_msg)
 			else if (!strcmp(bmsg->recovery, "recovery\n--factory_mode=whole") ||
 				 !strcmp(bmsg->recovery, "recovery\n--factory_mode=small"))
 				*bcb_recovery_msg = BCB_MSG_RECOVERY_PCBA;
+#ifdef CONFIG_RADXA // radxa customization
+			else if (!strcmp(bmsg->recovery, "recovery\n--wipe_all")){
+				*bcb_recovery_msg = BCB_MSG_RECOVERY_WIPE;
+			}else{
+				*bcb_recovery_msg = BCB_MSG_RECOVERY_NONE;
+			}
+#endif
 		}
 	}
 
@@ -250,6 +260,7 @@ int setup_boot_mode(void)
 	case BOOT_MODE_LOADER:
 		printf("enter Rockusb!\n");
 		env_set("preboot", "setenv preboot; rockusb 0 ${devtype} ${devnum}; rbrom");
+		run_command("rockusb 0 ${devtype} ${devnum}", 0);
 		break;
 	case BOOT_MODE_CHARGING:
 		printf("enter charging!\n");

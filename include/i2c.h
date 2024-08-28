@@ -135,6 +135,7 @@ struct i2c_msg_list {
  * @return 0 on success, -ve on failure
  */
 int dm_i2c_read(struct udevice *dev, uint offset, uint8_t *buffer, int len);
+int dm_i2c_addr_read(struct udevice *dev, uint i2c_addr, uint offset, uint8_t *buffer, int len);
 
 /**
  * dm_i2c_write() - write bytes to an I2C chip
@@ -149,6 +150,8 @@ int dm_i2c_read(struct udevice *dev, uint offset, uint8_t *buffer, int len);
  * @return 0 on success, -ve on failure
  */
 int dm_i2c_write(struct udevice *dev, uint offset, const uint8_t *buffer,
+		 int len);
+int dm_i2c_addr_write(struct udevice *dev, uint i2c_addr, uint offset, const uint8_t *buffer,
 		 int len);
 
 /**
@@ -189,6 +192,20 @@ int dm_i2c_reg_read(struct udevice *dev, uint offset);
  * @return 0 on success, -ve on error
  */
 int dm_i2c_reg_write(struct udevice *dev, uint offset, unsigned int val);
+
+/**
+ * dm_i2c_reg_clrset() - Apply bitmask to an I2C register
+ *
+ * Read value, apply bitmask and write modified value back to the
+ * given address in an I2C chip
+ *
+ * @dev:	Device to use for transfer
+ * @offset:	Address for the R/W operation
+ * @clr:	Bitmask of bits that should be cleared
+ * @set:	Bitmask of bits that should be set
+ * @return 0 on success, -ve on error
+ */
+int dm_i2c_reg_clrset(struct udevice *dev, uint offset, u32 clr, u32 set);
 
 /**
  * dm_i2c_xfer() - Transfer messages over I2C

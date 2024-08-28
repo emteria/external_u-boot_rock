@@ -211,7 +211,7 @@ config ROCKCHIP_RK3308
 	bool "Support Rockchip RK3308"
 	select ARM64 if !ARM64_BOOT_AARCH32
 	select ARM_SMCCC
-	select GICV2
+	imply GICV2
 	select SUPPORT_SPL if !ARM64_BOOT_AARCH32
 	select SUPPORT_TPL if !ARM64_BOOT_AARCH32
 	select SPL if !ARM64_BOOT_AARCH32
@@ -395,6 +395,14 @@ config ROCKCHIP_RK3568
 	imply TPL_SERIAL_SUPPORT
 	help
 	  The Rockchip RK3568 is a ARM-based SoC with a quad-core Cortex-A55.
+
+config RADXA
+        bool "Support radxa board"
+        default n
+
+config RADXA_ROCK3
+        bool "Support radxa rock3 board"
+        default n
 
 if ROCKCHIP_RK3568
 
