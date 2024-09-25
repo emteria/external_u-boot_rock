@@ -13,11 +13,17 @@
 struct max96745_priv {
 	struct udevice *dev;
 	struct gpio_desc enable_gpio;
+	bool idle_disc;
 };
 
 static int max96745_select(struct udevice *mux, struct udevice *bus,
 			   uint channel)
 {
+	struct max96745_priv *priv = dev_get_priv(mux);
+
+	if (!priv->idle_disc)
+		return 0;
+
 	if (channel == 1)
 		dm_i2c_reg_clrset(mux, 0x0086, DIS_REM_CC,
 				  FIELD_PREP(DIS_REM_CC, 0));
@@ -31,6 +37,11 @@ static int max96745_select(struct udevice *mux, struct udevice *bus,
 static int max96745_deselect(struct udevice *mux, struct udevice *bus,
 			     uint channel)
 {
+	struct max96745_priv *priv = dev_get_priv(mux);
+
+	if (!priv->idle_disc)
+		return 0;
+
 	if (channel == 1)
 		dm_i2c_reg_clrset(mux, 0x0086, DIS_REM_CC,
 				  FIELD_PREP(DIS_REM_CC, 1));
@@ -52,23 +63,25 @@ static int max96745_power_on(struct max96745_priv *priv)
 
 	if (dm_gpio_is_valid(&priv->enable_gpio)) {
 		dm_gpio_set_value(&priv->enable_gpio, 1);
-		mdelay(100);
+		mdelay(200);
 	}
 
-	ret = dm_i2c_reg_clrset(priv->dev, 0x0010, RESET_ALL,
-				FIELD_PREP(RESET_ALL, 1));
+	/* Set for I2C Fast-mode speed */
+	ret = dm_i2c_reg_write(priv->dev, 0x0070, 0x16);
 	if (ret < 0)
 		return ret;
 
-	mdelay(100);
+	if (priv->idle_disc) {
+		ret = dm_i2c_reg_clrset(priv->dev, 0x0076, DIS_REM_CC,
+					FIELD_PREP(DIS_REM_CC, 1));
+		if (ret < 0)
+			return ret;
 
-	return 0;
-}
-
-static int max96745_power_off(struct max96745_priv *priv)
-{
-	if (dm_gpio_is_valid(&priv->enable_gpio))
-		dm_gpio_set_value(&priv->enable_gpio, 0);
+		ret = dm_i2c_reg_clrset(priv->dev, 0x0086, DIS_REM_CC,
+					FIELD_PREP(DIS_REM_CC, 1));
+		if (ret < 0)
+			return ret;
+	}
 
 	return 0;
 }
@@ -83,6 +96,7 @@ static int max96745_probe(struct udevice *dev)
 		return ret;
 
 	priv->dev = dev;
+	priv->idle_disc = dev_read_bool(dev, "i2c-mux-idle-disconnect");
 
 	ret = gpio_request_by_name(dev, "enable-gpios", 0,
 				   &priv->enable_gpio, GPIOD_IS_OUT);
@@ -91,21 +105,7 @@ static int max96745_probe(struct udevice *dev)
 		return ret;
 	}
 
-	ret = max96745_power_on(priv);
-	if (ret) {
-		dev_err(dev, "%s: failed to power on: %d\n", __func__, ret);
-		return ret;
-	}
-
-	ret = dm_i2c_reg_read(dev, 0x002a);
-	if (ret < 0 || !FIELD_GET(LINK_LOCKED, ret)) {
-		max96745_power_off(priv);
-		dev_err(dev, "%s: GMSL link not locked\n", __func__);
-		return -ENODEV;
-	}
-
-	dm_i2c_reg_clrset(dev, 0x0076, DIS_REM_CC, FIELD_PREP(DIS_REM_CC, 1));
-	dm_i2c_reg_clrset(dev, 0x0086, DIS_REM_CC, FIELD_PREP(DIS_REM_CC, 1));
+	max96745_power_on(priv);
 
 	return 0;
 }

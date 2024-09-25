@@ -108,6 +108,7 @@
 #define  SFC_VER_4			0x4
 #define  SFC_VER_5			0x5
 #define  SFC_VER_6			0x6
+#define  SFC_VER_8			0x8
 
 /* Delay line controller resiter */
 #define SFC_DLL_CTRL0			0x3C
@@ -225,6 +226,7 @@ static u32 rockchip_sfc_get_max_iosize(struct rockchip_sfc *sfc)
 static u32 rockchip_sfc_get_max_dll_cells(struct rockchip_sfc *sfc)
 {
 	switch (rockchip_sfc_get_version(sfc)) {
+	case SFC_VER_8:
 	case SFC_VER_6:
 	case SFC_VER_5:
 		return SFC_DLL_CTRL0_DLL_MAX_VER5;
@@ -577,15 +579,15 @@ static int rockchip_sfc_xfer_data_dma_async(struct rockchip_sfc *sfc,
 {
 	void *dma_buf;
 
-	if (op->data.dir == SPI_MEM_DATA_OUT)
+	if (op->data.dir == SPI_MEM_DATA_OUT) {
 		dma_buf = (void *)op->data.buf.out;
-	else
+		flush_dcache_range((unsigned long)dma_buf,
+				   (unsigned long)dma_buf + len);
+	} else {
 		dma_buf = (void *)op->data.buf.in;
+	}
 
 	dev_dbg(sfc->dev, "xfer_dma_async len=%x %p\n", len, dma_buf);
-
-	flush_dcache_range((unsigned long)dma_buf,
-			   (unsigned long)dma_buf + len);
 
 	rockchip_sfc_fifo_transfer_dma(sfc, (dma_addr_t)dma_buf, len);
 	sfc->last_async_size = len;

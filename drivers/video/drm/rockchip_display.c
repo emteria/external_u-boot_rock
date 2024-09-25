@@ -57,7 +57,7 @@ static unsigned long memory_start;
 static unsigned long cubic_lut_memory_start;
 static unsigned long memory_end;
 static struct base2_info base_parameter;
-static uint32_t crc32_table[256];
+static u32 align_size = PAGE_SIZE;
 
 /*
  * the phy types are used by different connectors in public.
@@ -75,41 +75,6 @@ struct public_phy_data {
 	int public_phy_type;
 	bool phy_init;
 };
-
-void rockchip_display_make_crc32_table(void)
-{
-	uint32_t c;
-	int n, k;
-	unsigned long poly;		/* polynomial exclusive-or pattern */
-	/* terms of polynomial defining this crc (except x^32): */
-	static const char p[] = {0, 1, 2, 4, 5, 7, 8, 10, 11, 12, 16, 22, 23, 26};
-
-	/* make exclusive-or pattern from polynomial (0xedb88320L) */
-	poly = 0L;
-	for (n = 0; n < sizeof(p) / sizeof(char); n++)
-		poly |= 1L << (31 - p[n]);
-
-	for (n = 0; n < 256; n++) {
-		c = (unsigned long)n;
-		for (k = 0; k < 8; k++)
-		c = c & 1 ? poly ^ (c >> 1) : c >> 1;
-		crc32_table[n] = cpu_to_le32(c);
-	}
-}
-
-uint32_t rockchip_display_crc32c_cal(unsigned char *data, int length)
-{
-	int i;
-	uint32_t crc;
-	crc = 0xFFFFFFFF;
-
-	for (i = 0; i < length; i++) {
-		crc = crc32_table[(crc ^ *data) & 0xff] ^ (crc >> 8);
-		data++;
-	}
-
-	return crc ^ 0xffffffff;
-}
 
 int rockchip_get_baseparameter(void)
 {
@@ -152,6 +117,7 @@ struct base2_disp_info *rockchip_get_disp_info(int type, int id)
 	struct base2_disp_header *disp_header;
 	int i = 0, offset = -1;
 	u32 crc_val;
+	u32 base2_length;
 	void *base_parameter_addr = (void *)&base_parameter;
 
 	for (i = 0; i < 8; i++) {
@@ -178,25 +144,36 @@ struct base2_disp_info *rockchip_get_disp_info(int type, int id)
 	if (strncasecmp(disp_info->disp_head_flag, "DISP", 4))
 		return NULL;
 
-	crc_val = rockchip_display_crc32c_cal((unsigned char *)disp_info, sizeof(struct base2_disp_info) - 4);
-
-	if (crc_val != disp_info->crc) {
-		printf("error: connector type[%d], id[%d] disp info crc check error\n", type, id);
-		return NULL;
+	if (base_parameter.major_version == 3 && base_parameter.minor_version == 0) {
+		crc_val = rockchip_display_crc32c_cal((unsigned char *)disp_info,
+						      sizeof(struct base2_disp_info) - 4);
+		if (crc_val != disp_info->crc2) {
+			printf("error: connector type[%d], id[%d] disp info crc2 check error\n",
+			       type, id);
+			return NULL;
+		}
+	} else {
+		base2_length = sizeof(struct base2_disp_info) - sizeof(struct csc_info) -
+			       sizeof(struct acm_data) - 10 * 1024 - 4;
+		crc_val = rockchip_display_crc32c_cal((unsigned char *)disp_info, base2_length - 4);
+		if (crc_val != disp_info->crc) {
+			printf("error: connector type[%d], id[%d] disp info crc check error\n",
+			       type, id);
+			return NULL;
+		}
 	}
 
 	return disp_info;
 }
 
 /* check which kind of public phy does connector use */
-static int check_public_use_phy(struct display_state *state)
+static int check_public_use_phy(struct rockchip_connector *conn)
 {
 	int ret = NONE;
 #ifdef CONFIG_ROCKCHIP_INNO_HDMI_PHY
-	struct connector_state *conn_state = &state->conn_state;
 
-	if (!strncmp(dev_read_name(conn_state->dev), "tve", 3) ||
-	    !strncmp(dev_read_name(conn_state->dev), "hdmi", 4))
+	if (!strncmp(dev_read_name(conn->dev), "tve", 3) ||
+	    !strncmp(dev_read_name(conn->dev), "hdmi", 4))
 		ret = INNO_HDMI_PHY;
 #endif
 
@@ -207,10 +184,9 @@ static int check_public_use_phy(struct display_state *state)
  * get public phy driver and initialize it.
  * The current version only has inno hdmi phy for hdmi and tve.
  */
-static int get_public_phy(struct display_state *state,
+static int get_public_phy(struct rockchip_connector *conn,
 			  struct public_phy_data *data)
 {
-	struct connector_state *conn_state = &state->conn_state;
 	struct rockchip_phy *phy;
 	struct udevice *dev;
 	int ret = 0;
@@ -242,10 +218,10 @@ static int get_public_phy(struct display_state *state,
 			printf("failed to init phy driver\n");
 			return ret;
 		}
-		conn_state->phy = phy;
+		conn->phy = phy;
 
 		debug("inno hdmi phy init success, save it\n");
-		data->phy_drv = conn_state->phy;
+		data->phy_drv = conn->phy;
 		data->phy_init = true;
 		return 0;
 	default:
@@ -255,9 +231,9 @@ static int get_public_phy(struct display_state *state,
 
 static void init_display_buffer(ulong base)
 {
-	memory_start = base + DRM_ROCKCHIP_FB_SIZE;
+	memory_start = ALIGN(base + DRM_ROCKCHIP_FB_SIZE, align_size);
 	memory_end = memory_start;
-	cubic_lut_memory_start = memory_start + MEMORY_POOL_SIZE;
+	cubic_lut_memory_start = ALIGN(memory_start + MEMORY_POOL_SIZE, align_size);
 }
 
 void *get_display_buffer(int size)
@@ -314,20 +290,19 @@ bool can_direct_logo(int bpp)
 	return bpp == 16 || bpp == 32;
 }
 
-static int connector_phy_init(struct display_state *state,
+static int connector_phy_init(struct rockchip_connector *conn,
 			      struct public_phy_data *data)
 {
-	struct connector_state *conn_state = &state->conn_state;
 	int type;
 
 	/* does this connector use public phy with others */
-	type = check_public_use_phy(state);
+	type = check_public_use_phy(conn);
 	if (type == INNO_HDMI_PHY) {
 		/* there is no public phy was initialized */
 		if (!data->phy_init) {
 			debug("start get public phy\n");
 			data->public_phy_type = type;
-			if (get_public_phy(state, data)) {
+			if (get_public_phy(conn, data)) {
 				printf("can't find correct public phy type\n");
 				free(data);
 				return -EINVAL;
@@ -336,84 +311,22 @@ static int connector_phy_init(struct display_state *state,
 		}
 
 		/* if this phy has been initialized, get it directly */
-		conn_state->phy = (struct rockchip_phy *)data->phy_drv;
+		conn->phy = (struct rockchip_phy *)data->phy_drv;
 		return 0;
 	}
 
 	return 0;
 }
 
-static int connector_panel_init(struct display_state *state)
-{
-	struct connector_state *conn_state = &state->conn_state;
-	struct panel_state *panel_state = &state->panel_state;
-	const struct rockchip_panel *panel = panel_state->panel;
-	ofnode dsp_lut_node;
-	int ret, len;
-
-	if (!panel)
-		return 0;
-
-	dsp_lut_node = dev_read_subnode(panel->dev, "dsp-lut");
-	if (!ofnode_valid(dsp_lut_node)) {
-		debug("%s can not find dsp-lut node\n", __func__);
-		return 0;
-	}
-
-	ofnode_get_property(dsp_lut_node, "gamma-lut", &len);
-	if (len > 0) {
-		conn_state->gamma.size = len / sizeof(u32);
-		conn_state->gamma.lut = malloc(len);
-		if (!conn_state->gamma.lut) {
-			printf("malloc gamma lut failed\n");
-			return -ENOMEM;
-		}
-		ret = ofnode_read_u32_array(dsp_lut_node, "gamma-lut",
-					    conn_state->gamma.lut,
-					    conn_state->gamma.size);
-		if (ret) {
-			printf("Cannot decode gamma_lut\n");
-			conn_state->gamma.lut = NULL;
-			return -EINVAL;
-		}
-		panel_state->dsp_lut_node = dsp_lut_node;
-	}
-
-	return 0;
-}
-
-int drm_mode_vrefresh(const struct drm_display_mode *mode)
-{
-	int refresh = 0;
-	unsigned int calc_val;
-
-	if (mode->vrefresh > 0) {
-		refresh = mode->vrefresh;
-	} else if (mode->htotal > 0 && mode->vtotal > 0) {
-		int vtotal;
-
-		vtotal = mode->vtotal;
-		/* work out vrefresh the value will be x1000 */
-		calc_val = (mode->clock * 1000);
-		calc_val /= mode->htotal;
-		refresh = (calc_val + vtotal / 2) / vtotal;
-
-		if (mode->flags & DRM_MODE_FLAG_INTERLACE)
-			refresh *= 2;
-		if (mode->flags & DRM_MODE_FLAG_DBLSCAN)
-			refresh /= 2;
-		if (mode->vscan > 1)
-			refresh /= mode->vscan;
-	}
-	return refresh;
-}
-
-int rockchip_ofnode_get_display_mode(ofnode node, struct drm_display_mode *mode)
+int rockchip_ofnode_get_display_mode(ofnode node, struct drm_display_mode *mode, u32 *bus_flags)
 {
 	int hactive, vactive, pixelclock;
 	int hfront_porch, hback_porch, hsync_len;
 	int vfront_porch, vback_porch, vsync_len;
 	int val, flags = 0;
+
+#define FDT_GET_BOOL(val, name) \
+	val = ofnode_read_bool(node, name);
 
 #define FDT_GET_INT(val, name) \
 	val = ofnode_read_s32_default(node, name, -1); \
@@ -438,8 +351,18 @@ int rockchip_ofnode_get_display_mode(ofnode node, struct drm_display_mode *mode)
 	flags |= val ? DRM_MODE_FLAG_PHSYNC : DRM_MODE_FLAG_NHSYNC;
 	FDT_GET_INT(val, "vsync-active");
 	flags |= val ? DRM_MODE_FLAG_PVSYNC : DRM_MODE_FLAG_NVSYNC;
+
+	FDT_GET_BOOL(val, "interlaced");
+	flags |= val ? DRM_MODE_FLAG_INTERLACE : 0;
+	FDT_GET_BOOL(val, "doublescan");
+	flags |= val ? DRM_MODE_FLAG_DBLSCAN : 0;
+	FDT_GET_BOOL(val, "doubleclk");
+	flags |= val ? DISPLAY_FLAGS_DOUBLECLK : 0;
+
+	FDT_GET_INT(val, "de-active");
+	*bus_flags |= val ? DRM_BUS_FLAG_DE_HIGH : DRM_BUS_FLAG_DE_LOW;
 	FDT_GET_INT(val, "pixelclk-active");
-	flags |= val ? DRM_MODE_FLAG_PPIXDATA : 0;
+	*bus_flags |= val ? DRM_BUS_FLAG_PIXDATA_DRIVE_POSEDGE : DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE;
 
 	FDT_GET_INT_DEFAULT(val, "screen-rotate", 0);
 	if (val == DRM_MODE_FLAG_XMIRROR) {
@@ -467,11 +390,13 @@ int rockchip_ofnode_get_display_mode(ofnode node, struct drm_display_mode *mode)
 	return 0;
 }
 
-static int display_get_force_timing_from_dts(ofnode node, struct drm_display_mode *mode)
+static int display_get_force_timing_from_dts(ofnode node,
+					     struct drm_display_mode *mode,
+					     u32 *bus_flags)
 {
 	int ret = 0;
 
-	ret = rockchip_ofnode_get_display_mode(node, mode);
+	ret = rockchip_ofnode_get_display_mode(node, mode, bus_flags);
 
 	if (ret) {
 		mode->clock = 74250;
@@ -497,16 +422,25 @@ static int display_get_force_timing_from_dts(ofnode node, struct drm_display_mod
 	return 0;
 }
 
-static int display_get_timing_from_dts(struct panel_state *panel_state,
-				       struct drm_display_mode *mode)
+static int display_get_timing_from_dts(struct rockchip_panel *panel,
+				       struct drm_display_mode *mode,
+				       u32 *bus_flags)
 {
-	struct rockchip_panel *panel = panel_state->panel;
 	struct ofnode_phandle_args args;
-	ofnode dt, timing;
+	ofnode dt, timing, mcu_panel;
 	int ret;
 
+	mcu_panel = dev_read_subnode(panel->dev, "mcu-panel");
 	dt = dev_read_subnode(panel->dev, "display-timings");
 	if (ofnode_valid(dt)) {
+		ret = ofnode_parse_phandle_with_args(dt, "native-mode", NULL,
+						     0, 0, &args);
+		if (ret)
+			return ret;
+
+		timing = args.node;
+	} else if (ofnode_valid(mcu_panel)) {
+		dt = ofnode_find_subnode(mcu_panel, "display-timings");
 		ret = ofnode_parse_phandle_with_args(dt, "native-mode", NULL,
 						     0, 0, &args);
 		if (ret)
@@ -522,163 +456,26 @@ static int display_get_timing_from_dts(struct panel_state *panel_state,
 		return -ENXIO;
 	}
 
-	rockchip_ofnode_get_display_mode(timing, mode);
+	rockchip_ofnode_get_display_mode(timing, mode, bus_flags);
+
+	if (IS_ENABLED(CONFIG_ROCKCHIP_RK3568) || IS_ENABLED(CONFIG_ROCKCHIP_RK3588)) {
+		if (mode->hdisplay % 4) {
+			int old_hdisplay = mode->hdisplay;
+			int align = 4 - (mode->hdisplay % 4);
+
+			mode->hdisplay += align;
+			mode->hsync_start += align;
+			mode->hsync_end += align;
+			mode->htotal += align;
+
+			ofnode_write_u32_array(timing, "hactive", (u32 *)&mode->hdisplay, 1);
+
+			printf("WARN: hactive need to be aligned with 4-pixel, %d -> %d\n",
+				old_hdisplay, mode->hdisplay);
+		}
+	}
 
 	return 0;
-}
-
-/**
- * drm_mode_max_resolution_filter - mark modes out of vop max resolution
- * @edid_data: structure store mode list
- * @max_output: vop max output resolution
- */
-void drm_mode_max_resolution_filter(struct hdmi_edid_data *edid_data,
-				    struct vop_rect *max_output)
-{
-	int i;
-
-	for (i = 0; i < edid_data->modes; i++) {
-		if (edid_data->mode_buf[i].hdisplay > max_output->width ||
-		    edid_data->mode_buf[i].vdisplay > max_output->height)
-			edid_data->mode_buf[i].invalid = true;
-	}
-}
-
-/**
- * drm_mode_set_crtcinfo - set CRTC modesetting timing parameters
- * @p: mode
- * @adjust_flags: a combination of adjustment flags
- *
- * Setup the CRTC modesetting timing parameters for @p, adjusting if necessary.
- *
- * - The CRTC_INTERLACE_HALVE_V flag can be used to halve vertical timings of
- *   interlaced modes.
- * - The CRTC_STEREO_DOUBLE flag can be used to compute the timings for
- *   buffers containing two eyes (only adjust the timings when needed, eg. for
- *   "frame packing" or "side by side full").
- * - The CRTC_NO_DBLSCAN and CRTC_NO_VSCAN flags request that adjustment *not*
- *   be performed for doublescan and vscan > 1 modes respectively.
- */
-void drm_mode_set_crtcinfo(struct drm_display_mode *p, int adjust_flags)
-{
-	if ((p == NULL) || ((p->type & DRM_MODE_TYPE_CRTC_C) == DRM_MODE_TYPE_BUILTIN))
-		return;
-
-	if (p->flags & DRM_MODE_FLAG_DBLCLK)
-		p->crtc_clock = 2 * p->clock;
-	else
-		p->crtc_clock = p->clock;
-	p->crtc_hdisplay = p->hdisplay;
-	p->crtc_hsync_start = p->hsync_start;
-	p->crtc_hsync_end = p->hsync_end;
-	p->crtc_htotal = p->htotal;
-	p->crtc_hskew = p->hskew;
-	p->crtc_vdisplay = p->vdisplay;
-	p->crtc_vsync_start = p->vsync_start;
-	p->crtc_vsync_end = p->vsync_end;
-	p->crtc_vtotal = p->vtotal;
-
-	if (p->flags & DRM_MODE_FLAG_INTERLACE) {
-		if (adjust_flags & CRTC_INTERLACE_HALVE_V) {
-			p->crtc_vdisplay /= 2;
-			p->crtc_vsync_start /= 2;
-			p->crtc_vsync_end /= 2;
-			p->crtc_vtotal /= 2;
-		}
-	}
-
-	if (!(adjust_flags & CRTC_NO_DBLSCAN)) {
-		if (p->flags & DRM_MODE_FLAG_DBLSCAN) {
-			p->crtc_vdisplay *= 2;
-			p->crtc_vsync_start *= 2;
-			p->crtc_vsync_end *= 2;
-			p->crtc_vtotal *= 2;
-		}
-	}
-
-	if (!(adjust_flags & CRTC_NO_VSCAN)) {
-		if (p->vscan > 1) {
-			p->crtc_vdisplay *= p->vscan;
-			p->crtc_vsync_start *= p->vscan;
-			p->crtc_vsync_end *= p->vscan;
-			p->crtc_vtotal *= p->vscan;
-		}
-	}
-
-	if (adjust_flags & CRTC_STEREO_DOUBLE) {
-		unsigned int layout = p->flags & DRM_MODE_FLAG_3D_MASK;
-
-		switch (layout) {
-		case DRM_MODE_FLAG_3D_FRAME_PACKING:
-			p->crtc_clock *= 2;
-			p->crtc_vdisplay += p->crtc_vtotal;
-			p->crtc_vsync_start += p->crtc_vtotal;
-			p->crtc_vsync_end += p->crtc_vtotal;
-			p->crtc_vtotal += p->crtc_vtotal;
-			break;
-		}
-	}
-
-	p->crtc_vblank_start = min(p->crtc_vsync_start, p->crtc_vdisplay);
-	p->crtc_vblank_end = max(p->crtc_vsync_end, p->crtc_vtotal);
-	p->crtc_hblank_start = min(p->crtc_hsync_start, p->crtc_hdisplay);
-	p->crtc_hblank_end = max(p->crtc_hsync_end, p->crtc_htotal);
-}
-
-/**
- * drm_mode_is_420_only - if a given videomode can be only supported in YCBCR420
- * output format
- *
- * @connector: drm connector under action.
- * @mode: video mode to be tested.
- *
- * Returns:
- * true if the mode can be supported in YCBCR420 format
- * false if not.
- */
-bool drm_mode_is_420_only(const struct drm_display_info *display,
-			  struct drm_display_mode *mode)
-{
-	u8 vic = drm_match_cea_mode(mode);
-
-	return test_bit(vic, display->hdmi.y420_vdb_modes);
-}
-
-/**
- * drm_mode_is_420_also - if a given videomode can be supported in YCBCR420
- * output format also (along with RGB/YCBCR444/422)
- *
- * @display: display under action.
- * @mode: video mode to be tested.
- *
- * Returns:
- * true if the mode can be support YCBCR420 format
- * false if not.
- */
-bool drm_mode_is_420_also(const struct drm_display_info *display,
-			  struct drm_display_mode *mode)
-{
-	u8 vic = drm_match_cea_mode(mode);
-
-	return test_bit(vic, display->hdmi.y420_cmdb_modes);
-}
-
-/**
- * drm_mode_is_420 - if a given videomode can be supported in YCBCR420
- * output format
- *
- * @display: display under action.
- * @mode: video mode to be tested.
- *
- * Returns:
- * true if the mode can be supported in YCBCR420 format
- * false if not.
- */
-bool drm_mode_is_420(const struct drm_display_info *display,
-		     struct drm_display_mode *mode)
-{
-	return drm_mode_is_420_only(display, mode) ||
-		drm_mode_is_420_also(display, mode);
 }
 
 static int display_get_timing(struct display_state *state)
@@ -686,11 +483,13 @@ static int display_get_timing(struct display_state *state)
 	struct connector_state *conn_state = &state->conn_state;
 	struct drm_display_mode *mode = &conn_state->mode;
 	const struct drm_display_mode *m;
-	struct panel_state *panel_state = &state->panel_state;
-	const struct rockchip_panel *panel = panel_state->panel;
+	struct rockchip_panel *panel = conn_state->connector->panel;
+
+	if (panel->funcs->get_mode)
+		return panel->funcs->get_mode(panel, mode);
 
 	if (dev_of_valid(panel->dev) &&
-	    !display_get_timing_from_dts(panel_state, mode)) {
+	    !display_get_timing_from_dts(panel, mode, &conn_state->bus_flags)) {
 		printf("Using display timing dts\n");
 		return 0;
 	}
@@ -712,16 +511,13 @@ static int display_pre_init(void)
 
 	list_for_each_entry(state, &rockchip_display_list, head) {
 		struct connector_state *conn_state = &state->conn_state;
-		const struct rockchip_connector *conn = conn_state->connector;
-		const struct rockchip_connector_funcs *conn_funcs = conn->funcs;
 		struct crtc_state *crtc_state = &state->crtc_state;
 		struct rockchip_crtc *crtc = crtc_state->crtc;
 
-		if (conn_funcs->pre_init) {
-			ret = conn_funcs->pre_init(state);
-			if (ret)
-				printf("pre init conn error\n");
-		}
+		ret = rockchip_connector_pre_init(state);
+		if (ret)
+			printf("pre init conn error\n");
+
 		crtc->vps[crtc_state->crtc_id].output_type = conn_state->type;
 	}
 	return ret;
@@ -767,18 +563,58 @@ static int display_get_edid_mode(struct display_state *state)
 		mode->picture_aspect_ratio = HDMI_PICTURE_ASPECT_16_9;
 		mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
 
-		printf("error: %s get mode from edid failed, use 720p60 as default mode\n", conn_state->dev->name);
+		printf("error: %s get mode from edid failed, use 720p60 as default mode\n",
+		       state->conn_state.connector->dev->name);
 	}
 
 	return ret;
 }
 
+static int display_mode_valid(struct display_state *state)
+{
+	struct connector_state *conn_state = &state->conn_state;
+	struct rockchip_connector *conn = conn_state->connector;
+	const struct rockchip_connector_funcs *conn_funcs = conn->funcs;
+	struct crtc_state *crtc_state = &state->crtc_state;
+	const struct rockchip_crtc *crtc = crtc_state->crtc;
+	const struct rockchip_crtc_funcs *crtc_funcs = crtc->funcs;
+	int ret;
+
+	if (conn_funcs->mode_valid && state->enabled_at_spl == false) {
+		ret = conn_funcs->mode_valid(conn, state);
+		if (ret)
+			return ret;
+	}
+
+	if (crtc_funcs->mode_valid) {
+		ret = crtc_funcs->mode_valid(state);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int display_mode_fixup(struct display_state *state)
+{
+	struct crtc_state *crtc_state = &state->crtc_state;
+	const struct rockchip_crtc *crtc = crtc_state->crtc;
+	const struct rockchip_crtc_funcs *crtc_funcs = crtc->funcs;
+	int ret;
+
+	if (crtc_funcs->mode_fixup) {
+		ret = crtc_funcs->mode_fixup(state);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int display_init(struct display_state *state)
 {
 	struct connector_state *conn_state = &state->conn_state;
-	struct panel_state *panel_state = &state->panel_state;
-	const struct rockchip_connector *conn = conn_state->connector;
-	const struct rockchip_connector_funcs *conn_funcs = conn->funcs;
+	struct rockchip_connector *conn = conn_state->connector;
 	struct crtc_state *crtc_state = &state->crtc_state;
 	struct rockchip_crtc *crtc = crtc_state->crtc;
 	const struct rockchip_crtc_funcs *crtc_funcs = crtc->funcs;
@@ -786,7 +622,9 @@ static int display_init(struct display_state *state)
 	const char *compatible;
 	int ret = 0;
 	static bool __print_once = false;
-
+#ifdef CONFIG_SPL_BUILD
+	struct spl_display_info *spl_disp_info = (struct spl_display_info *)CONFIG_SPL_VIDEO_BUF;
+#endif
 	if (!__print_once) {
 		__print_once = true;
 		printf("Rockchip UBOOT DRM driver version: %s\n", DRIVER_VERSION);
@@ -795,11 +633,17 @@ static int display_init(struct display_state *state)
 	if (state->is_init)
 		return 0;
 
-	if (!conn_funcs || !crtc_funcs) {
-		printf("failed to find connector or crtc functions\n");
+	if (!crtc_funcs) {
+		printf("failed to find crtc functions\n");
 		return -ENXIO;
 	}
 
+#ifdef CONFIG_SPL_BUILD
+	if (state->conn_state.type == DRM_MODE_CONNECTOR_HDMIA)
+		state->enabled_at_spl = spl_disp_info->enabled == 1 ? true : false;
+	if (state->enabled_at_spl)
+		printf("HDMI enabled at SPL\n");
+#endif
 	if (crtc_state->crtc->active && !crtc_state->ports_node &&
 	    memcmp(&crtc_state->crtc->active_mode, &conn_state->mode,
 		   sizeof(struct drm_display_mode))) {
@@ -818,25 +662,16 @@ static int display_init(struct display_state *state)
 			return ret;
 	}
 
-	if (panel_state->panel)
-		rockchip_panel_init(panel_state->panel, state);
-
-	if (conn_state->bridge)
-		rockchip_bridge_init(conn_state->bridge, state);
-
-	if (conn_funcs->init) {
-		ret = conn_funcs->init(state);
+	if (state->enabled_at_spl == false) {
+		ret = rockchip_connector_init(state);
 		if (ret)
 			goto deinit;
 	}
 
-	if (conn_state->phy)
-		rockchip_phy_init(conn_state->phy);
-
 	/*
 	 * support hotplug, but not connect;
 	 */
-#ifdef CONFIG_ROCKCHIP_DRM_TVE
+#ifdef CONFIG_DRM_ROCKCHIP_TVE
 	if (crtc->hdmi_hpd && conn_state->type == DRM_MODE_CONNECTOR_TV) {
 		printf("hdmi plugin ,skip tve\n");
 		goto deinit;
@@ -847,48 +682,74 @@ static int display_init(struct display_state *state)
 		goto deinit;
 	}
 #endif
-	if (conn_funcs->detect) {
-		ret = conn_funcs->detect(state);
-#if defined(CONFIG_ROCKCHIP_DRM_TVE) || defined(CONFIG_DRM_ROCKCHIP_RK1000)
-		if (conn_state->type == DRM_MODE_CONNECTOR_HDMIA)
-			crtc->hdmi_hpd = ret;
-#endif
-		if (!ret && !state->force_output) {
-			printf("%s disconnected\n", conn_state->dev->name);
-			goto deinit;
-		}
-	}
 
-	if (panel_state->panel) {
+	ret = rockchip_connector_detect(state);
+#if defined(CONFIG_DRM_ROCKCHIP_TVE) || defined(CONFIG_DRM_ROCKCHIP_RK1000)
+	if (conn_state->type == DRM_MODE_CONNECTOR_HDMIA)
+		crtc->hdmi_hpd = ret;
+	if (state->enabled_at_spl)
+		crtc->hdmi_hpd = true;
+#endif
+	if (!ret && !state->force_output)
+		goto deinit;
+
+	ret = 0;
+	if (state->enabled_at_spl == true) {
+#ifdef CONFIG_SPL_BUILD
+		struct drm_display_mode *mode = &conn_state->mode;
+
+		memcpy(mode, &spl_disp_info->mode,  sizeof(*mode));
+		conn_state->bus_format = spl_disp_info->bus_format;
+
+		printf("%s get display mode from spl:%dx%d, bus format:0x%x\n",
+			conn->dev->name, mode->hdisplay, mode->vdisplay, conn_state->bus_format);
+#endif
+	} else if (conn->panel) {
 		ret = display_get_timing(state);
 		if (!ret)
-			conn_state->bpc = panel_state->panel->bpc;
+			conn_state->bpc = conn->panel->bpc;
 #if defined(CONFIG_I2C_EDID)
-		if (ret < 0 && conn_funcs->get_edid) {
-			rockchip_panel_prepare(panel_state->panel);
-			ret = conn_funcs->get_edid(state);
+		if (ret < 0 && conn->funcs->get_edid) {
+			rockchip_panel_prepare(conn->panel);
+			ret = conn->funcs->get_edid(conn, state);
 			if (!ret)
 				display_get_edid_mode(state);
 		}
 #endif
-	} else if (conn_state->bridge) {
-		ret = video_bridge_read_edid(conn_state->bridge->dev,
+	} else if (conn->bridge) {
+		ret = video_bridge_read_edid(conn->bridge->dev,
 					     conn_state->edid, EDID_SIZE);
 		if (ret > 0) {
 #if defined(CONFIG_I2C_EDID)
 			display_get_edid_mode(state);
 #endif
 		} else {
-			ret = video_bridge_get_timing(conn_state->bridge->dev);
+			ret = video_bridge_get_timing(conn->bridge->dev);
 		}
-	} else if (conn_funcs->get_timing) {
-		ret = conn_funcs->get_timing(state);
-	} else if (conn_funcs->get_edid) {
-		ret = conn_funcs->get_edid(state);
+	} else if (conn->funcs->get_timing) {
+		ret = conn->funcs->get_timing(conn, state);
+	} else if (conn->funcs->get_edid) {
+		ret = conn->funcs->get_edid(conn, state);
 #if defined(CONFIG_I2C_EDID)
 		if (!ret)
 			display_get_edid_mode(state);
 #endif
+	}
+
+	if (!ret && conn_state->secondary) {
+		struct rockchip_connector *connector = conn_state->secondary;
+
+		if (connector->panel) {
+			if (connector->panel->funcs->get_mode) {
+				struct drm_display_mode *_mode = drm_mode_create();
+
+				ret = connector->panel->funcs->get_mode(connector->panel, _mode);
+				if (!ret && !drm_mode_equal(_mode, mode))
+					ret = -EINVAL;
+
+				drm_mode_destroy(_mode);
+			}
+		}
 	}
 
 	if (ret && !state->force_output)
@@ -896,16 +757,21 @@ static int display_init(struct display_state *state)
 	if (state->force_output)
 		display_use_force_mode(state);
 
+	if (display_mode_valid(state))
+		goto deinit;
+
 	/* rk356x series drive mipi pixdata on posedge */
-	compatible = dev_read_string(conn_state->dev, "compatible");
-	if (!strcmp(compatible, "rockchip,rk3568-mipi-dsi"))
-		conn_state->mode.flags |= DRM_MODE_FLAG_PPIXDATA;
+	compatible = dev_read_string(conn->dev, "compatible");
+	if (!strcmp(compatible, "rockchip,rk3568-mipi-dsi")) {
+		conn_state->bus_flags &= ~DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE;
+		conn_state->bus_flags |= DRM_BUS_FLAG_PIXDATA_DRIVE_POSEDGE;
+	}
 
 	printf("%s: %s detailed mode clock %u kHz, flags[%x]\n"
 	       "    H: %04d %04d %04d %04d\n"
 	       "    V: %04d %04d %04d %04d\n"
 	       "bus_format: %x\n",
-	       conn_state->dev->name,
+	       conn->dev->name,
 	       state->force_output ? "use force output" : "",
 	       mode->clock, mode->flags,
 	       mode->hdisplay, mode->hsync_start,
@@ -914,12 +780,13 @@ static int display_init(struct display_state *state)
 	       mode->vsync_end, mode->vtotal,
 	       conn_state->bus_format);
 
-	drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V);
+	if (display_mode_fixup(state))
+		goto deinit;
 
-	if (conn_state->bridge)
-		rockchip_bridge_mode_set(conn_state->bridge, &conn_state->mode);
+	if (conn->bridge)
+		rockchip_bridge_mode_set(conn->bridge, &conn_state->mode);
 
-	if (crtc_funcs->init) {
+	if (crtc_funcs->init && state->enabled_at_spl == false) {
 		ret = crtc_funcs->init(state);
 		if (ret)
 			goto deinit;
@@ -933,8 +800,7 @@ static int display_init(struct display_state *state)
 	return 0;
 
 deinit:
-	if (conn_funcs->deinit)
-		conn_funcs->deinit(state);
+	rockchip_connector_deinit(state);
 	return ret;
 }
 
@@ -978,13 +844,9 @@ static int display_set_plane(struct display_state *state)
 
 static int display_enable(struct display_state *state)
 {
-	struct connector_state *conn_state = &state->conn_state;
-	const struct rockchip_connector *conn = conn_state->connector;
-	const struct rockchip_connector_funcs *conn_funcs = conn->funcs;
 	struct crtc_state *crtc_state = &state->crtc_state;
 	const struct rockchip_crtc *crtc = crtc_state->crtc;
 	const struct rockchip_crtc_funcs *crtc_funcs = crtc->funcs;
-	struct panel_state *panel_state = &state->panel_state;
 
 	if (!state->is_init)
 		return -EINVAL;
@@ -995,26 +857,17 @@ static int display_enable(struct display_state *state)
 	if (crtc_funcs->prepare)
 		crtc_funcs->prepare(state);
 
-	if (conn_funcs->prepare)
-		conn_funcs->prepare(state);
-
-	if (conn_state->bridge)
-		rockchip_bridge_pre_enable(conn_state->bridge);
-
-	if (panel_state->panel)
-		rockchip_panel_prepare(panel_state->panel);
+	if (state->enabled_at_spl == false)
+		rockchip_connector_pre_enable(state);
 
 	if (crtc_funcs->enable)
 		crtc_funcs->enable(state);
 
-	if (conn_funcs->enable)
-		conn_funcs->enable(state);
+	if (state->enabled_at_spl == false)
+		rockchip_connector_enable(state);
 
-	if (conn_state->bridge)
-		rockchip_bridge_enable(conn_state->bridge);
-
-	if (panel_state->panel)
-		rockchip_panel_enable(panel_state->panel);
+	if (crtc_state->soft_te)
+		crtc_funcs->apply_soft_te(state);
 
 	state->is_enable = true;
 
@@ -1023,13 +876,9 @@ static int display_enable(struct display_state *state)
 
 static int display_disable(struct display_state *state)
 {
-	struct connector_state *conn_state = &state->conn_state;
-	const struct rockchip_connector *conn = conn_state->connector;
-	const struct rockchip_connector_funcs *conn_funcs = conn->funcs;
 	struct crtc_state *crtc_state = &state->crtc_state;
 	const struct rockchip_crtc *crtc = crtc_state->crtc;
 	const struct rockchip_crtc_funcs *crtc_funcs = crtc->funcs;
-	struct panel_state *panel_state = &state->panel_state;
 
 	if (!state->is_init)
 		return 0;
@@ -1037,31 +886,55 @@ static int display_disable(struct display_state *state)
 	if (!state->is_enable)
 		return 0;
 
-	if (panel_state->panel)
-		rockchip_panel_disable(panel_state->panel);
-
-	if (conn_state->bridge)
-		rockchip_bridge_disable(conn_state->bridge);
-
-	if (conn_funcs->disable)
-		conn_funcs->disable(state);
+	rockchip_connector_disable(state);
 
 	if (crtc_funcs->disable)
 		crtc_funcs->disable(state);
 
-	if (panel_state->panel)
-		rockchip_panel_unprepare(panel_state->panel);
-
-	if (conn_state->bridge)
-		rockchip_bridge_post_disable(conn_state->bridge);
-
-	if (conn_funcs->unprepare)
-		conn_funcs->unprepare(state);
+	rockchip_connector_post_disable(state);
 
 	state->is_enable = 0;
 	state->is_init = 0;
 
 	return 0;
+}
+
+static int display_check(struct display_state *state)
+{
+	struct connector_state *conn_state = &state->conn_state;
+	struct rockchip_connector *conn = conn_state->connector;
+	const struct rockchip_connector_funcs *conn_funcs = conn->funcs;
+	struct crtc_state *crtc_state = &state->crtc_state;
+	const struct rockchip_crtc *crtc = crtc_state->crtc;
+	const struct rockchip_crtc_funcs *crtc_funcs = crtc->funcs;
+	int ret;
+
+	if (!state->is_init)
+		return 0;
+
+	if (conn_funcs->check) {
+		ret = conn_funcs->check(conn, state);
+		if (ret)
+			goto check_fail;
+	}
+
+	if (crtc_funcs->check) {
+		ret = crtc_funcs->check(state);
+		if (ret)
+			goto check_fail;
+	}
+
+	if (crtc_funcs->plane_check) {
+		ret = crtc_funcs->plane_check(state);
+		if (ret)
+			goto check_fail;
+	}
+
+	return 0;
+
+check_fail:
+	state->is_init = false;
+	return ret;
 }
 
 static int display_logo(struct display_state *state)
@@ -1089,7 +962,7 @@ static int display_logo(struct display_state *state)
 		printf("can't support bmp bits[%d]\n", logo->bpp);
 		return -EINVAL;
 	}
-	hdisplay = conn_state->mode.hdisplay;
+	hdisplay = conn_state->mode.crtc_hdisplay;
 	vdisplay = conn_state->mode.vdisplay;
 	crtc_state->src_rect.w = logo->width;
 	crtc_state->src_rect.h = logo->height;
@@ -1101,7 +974,7 @@ static int display_logo(struct display_state *state)
 	crtc_state->dma_addr = (u32)(unsigned long)logo->mem + logo->offset;
 	crtc_state->xvir = ALIGN(crtc_state->src_rect.w * logo->bpp, 32) >> 5;
 
-	if (logo->mode == ROCKCHIP_DISPLAY_FULLSCREEN) {
+	if (state->logo_mode == ROCKCHIP_DISPLAY_FULLSCREEN) {
 		crtc_state->crtc_rect.x = 0;
 		crtc_state->crtc_rect.y = 0;
 		crtc_state->crtc_rect.w = hdisplay;
@@ -1124,6 +997,7 @@ static int display_logo(struct display_state *state)
 		}
 	}
 
+	display_check(state);
 	display_set_plane(state);
 	display_enable(state);
 
@@ -1165,14 +1039,22 @@ err:
 	return 0;
 }
 
-static int get_crtc_mcu_mode(struct crtc_state *crtc_state)
+static int get_crtc_mcu_mode(struct crtc_state *crtc_state, struct device_node *port_node,
+			     bool is_ports_node)
 {
-	ofnode mcu_node;
+	ofnode mcu_node, vp_node;
 	int total_pixel, cs_pst, cs_pend, rw_pst, rw_pend;
 
-	mcu_node = dev_read_subnode(crtc_state->dev, "mcu-timing");
-	if (!ofnode_valid(mcu_node))
-		return -ENODEV;
+	if (is_ports_node) {
+		vp_node = np_to_ofnode(port_node);
+		mcu_node = ofnode_find_subnode(vp_node, "mcu-timing");
+		if (!ofnode_valid(mcu_node))
+			return -ENODEV;
+	} else {
+		mcu_node = dev_read_subnode(crtc_state->dev, "mcu-timing");
+		if (!ofnode_valid(mcu_node))
+			return -ENODEV;
+	}
 
 #define FDT_GET_MCU_INT(val, name) \
 	do { \
@@ -1416,145 +1298,231 @@ int rockchip_show_logo(void)
 	return ret;
 }
 
+int rockchip_vop_dump(const char *cmd)
+{
+	struct display_state *state;
+	struct crtc_state *crtc_state;
+	struct rockchip_crtc *crtc;
+	const struct rockchip_crtc_funcs *crtc_funcs;
+	int ret = -EINVAL;
+
+	list_for_each_entry(state, &rockchip_display_list, head) {
+		if (!state->is_init)
+			continue;
+		crtc_state = &state->crtc_state;
+		crtc = crtc_state->crtc;
+		crtc_funcs = crtc->funcs;
+
+		if (!cmd)
+			ret = crtc_funcs->active_regs_dump(state);
+		else if (!strcmp(cmd, "a") || !strcmp(cmd, "all"))
+			ret = crtc_funcs->regs_dump(state);
+		if (!ret)
+			break;
+	}
+
+	if (ret)
+		ret = CMD_RET_USAGE;
+
+	return ret;
+}
+
 enum {
 	PORT_DIR_IN,
 	PORT_DIR_OUT,
 };
 
-static struct rockchip_panel *rockchip_of_find_panel(struct udevice *dev)
+static const struct device_node *rockchip_of_graph_get_port_by_id(ofnode node, int id)
 {
-	ofnode panel_node, ports, port, ep, port_parent_node;
-	struct udevice *panel_dev;
-	int ret;
+	ofnode ports, port;
+	u32 reg;
 
-	panel_node = dev_read_subnode(dev, "panel");
-	if (ofnode_valid(panel_node) && ofnode_is_available(panel_node)) {
-		ret = uclass_get_device_by_ofnode(UCLASS_PANEL, panel_node,
+	ports = ofnode_find_subnode(node, "ports");
+	if (!ofnode_valid(ports))
+		return NULL;
+
+	ofnode_for_each_subnode(port, ports) {
+		if (ofnode_read_u32(port, "reg", &reg))
+			continue;
+
+		if (reg == id)
+			break;
+	}
+
+	if (reg == id)
+		return ofnode_to_np(port);
+
+	return NULL;
+}
+
+static const struct device_node *rockchip_of_graph_get_port_parent(ofnode port)
+{
+	ofnode parent;
+	int is_ports_node;
+
+	parent = ofnode_get_parent(port);
+	is_ports_node = strstr(ofnode_to_np(parent)->full_name, "ports") ? 1 : 0;
+	if (is_ports_node)
+		parent = ofnode_get_parent(parent);
+
+	return ofnode_to_np(parent);
+}
+
+const struct device_node *
+rockchip_of_graph_get_endpoint_by_regs(ofnode node, int port, int endpoint)
+{
+	const struct device_node *port_node;
+	ofnode ep;
+	u32 reg;
+
+	port_node = rockchip_of_graph_get_port_by_id(node, port);
+	if (!port_node)
+		return NULL;
+
+	ofnode_for_each_subnode(ep, np_to_ofnode(port_node)) {
+		if (ofnode_read_u32(ep, "reg", &reg))
+			break;
+		if (reg == endpoint)
+			break;
+	}
+
+	if (!ofnode_valid(ep))
+		return NULL;
+
+	return ofnode_to_np(ep);
+}
+
+static const struct device_node *
+rockchip_of_graph_get_remote_node(ofnode node, int port, int endpoint)
+{
+	const struct device_node *ep_node;
+	ofnode ep;
+	uint phandle;
+
+	ep_node = rockchip_of_graph_get_endpoint_by_regs(node, port, endpoint);
+	if (!ep_node)
+		return NULL;
+
+	if (ofnode_read_u32(np_to_ofnode(ep_node), "remote-endpoint", &phandle))
+		return NULL;
+
+	ep = ofnode_get_by_phandle(phandle);
+	if (!ofnode_valid(ep))
+		return NULL;
+
+	return ofnode_to_np(ep);
+}
+
+static int rockchip_of_find_panel(struct udevice *dev, struct rockchip_panel **panel)
+{
+	const struct device_node *ep_node, *panel_node;
+	ofnode panel_ofnode, port;
+	struct udevice *panel_dev;
+	int ret = 0;
+
+	*panel = NULL;
+	panel_ofnode = dev_read_subnode(dev, "panel");
+	if (ofnode_valid(panel_ofnode) && ofnode_is_available(panel_ofnode)) {
+		ret = uclass_get_device_by_ofnode(UCLASS_PANEL, panel_ofnode,
 						  &panel_dev);
 		if (!ret)
 			goto found;
 	}
 
-	ports = dev_read_subnode(dev, "ports");
-	if (!ofnode_valid(ports))
-		return NULL;
+	ep_node = rockchip_of_graph_get_remote_node(dev->node, PORT_DIR_OUT, 0);
+	if (!ep_node)
+		return -ENODEV;
 
-	ofnode_for_each_subnode(port, ports) {
-		u32 reg;
+	port = ofnode_get_parent(np_to_ofnode(ep_node));
+	if (!ofnode_valid(port))
+		return -ENODEV;
 
-		if (ofnode_read_u32(port, "reg", &reg))
-			continue;
+	panel_node = rockchip_of_graph_get_port_parent(port);
+	if (!panel_node)
+		return -ENODEV;
 
-		if (reg != PORT_DIR_OUT)
-			continue;
+	ret = uclass_get_device_by_ofnode(UCLASS_PANEL, np_to_ofnode(panel_node), &panel_dev);
+	if (!ret)
+		goto found;
 
-		ofnode_for_each_subnode(ep, port) {
-			ofnode _ep, _port;
-			uint phandle;
-			bool is_ports_node = false;
-
-			if (ofnode_read_u32(ep, "remote-endpoint", &phandle))
-				continue;
-
-			_ep = ofnode_get_by_phandle(phandle);
-			if (!ofnode_valid(_ep))
-				continue;
-
-			_port = ofnode_get_parent(_ep);
-			if (!ofnode_valid(_port))
-				continue;
-
-			port_parent_node = ofnode_get_parent(_port);
-			is_ports_node = strstr(port_parent_node.np->full_name, "ports") ? 1 : 0;
-			if (is_ports_node)
-				panel_node = ofnode_get_parent(port_parent_node);
-			else
-				panel_node = ofnode_get_parent(_port);
-			if (!ofnode_valid(panel_node))
-				continue;
-
-			ret = uclass_get_device_by_ofnode(UCLASS_PANEL,
-							  panel_node,
-							  &panel_dev);
-			if (!ret)
-				goto found;
-		}
-	}
-
-	return NULL;
+	return -ENODEV;
 
 found:
-	return (struct rockchip_panel *)dev_get_driver_data(panel_dev);
+	*panel = (struct rockchip_panel *)dev_get_driver_data(panel_dev);
+	return 0;
 }
 
-static struct rockchip_bridge *rockchip_ofnode_find_bridge(ofnode node)
+static int rockchip_of_find_bridge(struct udevice *dev, struct rockchip_bridge **bridge)
 {
-	struct udevice *dev;
-	int ret;
+	const struct device_node *ep_node, *bridge_node;
+	ofnode port;
+	struct udevice *bridge_dev;
+	int ret = 0;
 
-	ret = uclass_get_device_by_ofnode(UCLASS_VIDEO_BRIDGE, node, &dev);
-	if (ret)
-		return ERR_PTR(ret);
+	ep_node = rockchip_of_graph_get_remote_node(dev->node, PORT_DIR_OUT, 0);
+	if (!ep_node)
+		return -ENODEV;
 
-	return (struct rockchip_bridge *)dev_get_driver_data(dev);
+	port = ofnode_get_parent(np_to_ofnode(ep_node));
+	if (!ofnode_valid(port))
+		return -ENODEV;
+
+	bridge_node = rockchip_of_graph_get_port_parent(port);
+	if (!bridge_node)
+		return -ENODEV;
+
+	ret = uclass_get_device_by_ofnode(UCLASS_VIDEO_BRIDGE, np_to_ofnode(bridge_node),
+					  &bridge_dev);
+	if (!ret)
+		goto found;
+
+	return -ENODEV;
+
+found:
+	*bridge = (struct rockchip_bridge *)dev_get_driver_data(bridge_dev);
+	return 0;
 }
 
-static int rockchip_of_find_bridge(ofnode node, struct rockchip_bridge **bridge)
+static int rockchip_of_find_panel_or_bridge(struct udevice *dev, struct rockchip_panel **panel,
+					    struct rockchip_bridge **bridge)
 {
-	ofnode remote, ports, port, ep;
-	int ret = -EPROBE_DEFER;
-	u32 reg;
+	int ret = 0;
 
-	if (!bridge)
-		return -EINVAL;
+	if (*panel)
+		return 0;
 
-	ports = ofnode_find_subnode(node, "ports");
-	if (!ofnode_valid(ports))
-		return -ENODEV;
+	*panel = NULL;
+	*bridge = NULL;
 
-	ofnode_for_each_subnode(port, ports) {
-		if (ofnode_read_u32(port, "reg", &reg))
-			continue;
-
-		if (reg == PORT_DIR_OUT)
-			break;
+	if (panel) {
+		ret  = rockchip_of_find_panel(dev, panel);
+		if (!ret)
+			return 0;
 	}
 
-	if (reg != PORT_DIR_OUT)
-		return -ENODEV;
-
-	ofnode_for_each_subnode(ep, port) {
-		ofnode _ep, _port, _ports;
-		uint phandle;
-
-		if (ofnode_read_u32(ep, "remote-endpoint", &phandle))
-			continue;
-
-		_ep = ofnode_get_by_phandle(phandle);
-		if (!ofnode_valid(_ep))
-			continue;
-
-		_port = ofnode_get_parent(_ep);
-		if (!ofnode_valid(_port))
-			continue;
-
-		_ports = ofnode_get_parent(_port);
-		if (!ofnode_valid(_ports))
-			continue;
-
-		remote = ofnode_get_parent(_ports);
-		if (ofnode_valid(remote))
-			break;
+	if (ret) {
+		ret = rockchip_of_find_bridge(dev, bridge);
+		if (!ret)
+			ret = rockchip_of_find_panel_or_bridge((*bridge)->dev, panel,
+							       &(*bridge)->next_bridge);
 	}
-
-	*bridge = rockchip_ofnode_find_bridge(remote);
-	if (!IS_ERR(*bridge))
-		ret = 0;
 
 	return ret;
 }
 
-static struct udevice *rockchip_of_find_connector(ofnode endpoint)
+static struct rockchip_phy *rockchip_of_find_phy(struct udevice *dev)
+{
+	struct udevice *phy_dev;
+	int ret;
+
+	ret = uclass_get_device_by_phandle(UCLASS_PHY, dev, "phys", &phy_dev);
+	if (ret)
+		return NULL;
+
+	return (struct rockchip_phy *)dev_get_driver_data(phy_dev);
+}
+
+static struct udevice *rockchip_of_find_connector_device(ofnode endpoint)
 {
 	ofnode ep, port, ports, conn;
 	uint phandle;
@@ -1587,6 +1555,77 @@ static struct udevice *rockchip_of_find_connector(ofnode endpoint)
 	return dev;
 }
 
+static struct rockchip_connector *rockchip_of_get_connector(ofnode endpoint)
+{
+	struct rockchip_connector *conn;
+	struct udevice *dev;
+	int ret;
+
+	dev = rockchip_of_find_connector_device(endpoint);
+	if (!dev) {
+		printf("Warn: can't find connect driver\n");
+		return NULL;
+	}
+
+	conn = get_rockchip_connector_by_device(dev);
+	if (!conn)
+		return NULL;
+	ret = rockchip_of_find_panel_or_bridge(dev, &conn->panel, &conn->bridge);
+	if (ret)
+		debug("Warn: no find panel or bridge\n");
+
+	conn->phy = rockchip_of_find_phy(dev);
+
+	return conn;
+}
+
+static struct rockchip_connector *rockchip_get_split_connector(struct rockchip_connector *conn)
+{
+	char *conn_name;
+	struct device_node *split_node;
+	struct udevice *split_dev;
+	struct rockchip_connector *split_conn;
+	bool split_mode;
+	int ret;
+
+	split_mode = ofnode_read_bool(conn->dev->node, "split-mode");
+	if (!split_mode)
+		return NULL;
+
+	switch (conn->type) {
+	case DRM_MODE_CONNECTOR_DisplayPort:
+		conn_name = "dp";
+		break;
+	case DRM_MODE_CONNECTOR_eDP:
+		conn_name = "edp";
+		break;
+	case DRM_MODE_CONNECTOR_HDMIA:
+		conn_name = "hdmi";
+		break;
+	default:
+		return NULL;
+	}
+
+	split_node = of_alias_get_dev(conn_name, !conn->id);
+	if (!split_node || !of_device_is_available(split_node))
+		return NULL;
+
+	ret = uclass_get_device_by_ofnode(UCLASS_DISPLAY, np_to_ofnode(split_node), &split_dev);
+	if (ret)
+		return NULL;
+
+	split_conn = get_rockchip_connector_by_device(split_dev);
+	if (!split_conn)
+		return NULL;
+	ret = rockchip_of_find_panel_or_bridge(split_dev, &split_conn->panel, &split_conn->bridge);
+	if (ret)
+		debug("Warn: no find panel or bridge\n");
+
+	split_conn->phy = rockchip_of_find_phy(split_dev);
+
+	return split_conn;
+}
+
 static bool rockchip_get_display_path_status(ofnode endpoint)
 {
 	ofnode ep;
@@ -1600,18 +1639,6 @@ static bool rockchip_get_display_path_status(ofnode endpoint)
 		return false;
 
 	return true;
-}
-
-static struct rockchip_phy *rockchip_of_find_phy(struct udevice *dev)
-{
-	struct udevice *phy_dev;
-	int ret;
-
-	ret = uclass_get_device_by_phandle(UCLASS_PHY, dev, "phys", &phy_dev);
-	if (ret)
-		return NULL;
-
-	return (struct rockchip_phy *)dev_get_driver_data(phy_dev);
 }
 
 #if defined(CONFIG_ROCKCHIP_RK3568)
@@ -1694,12 +1721,9 @@ static int rockchip_display_probe(struct udevice *dev)
 	struct video_uc_platdata *plat = dev_get_uclass_platdata(dev);
 	const void *blob = gd->fdt_blob;
 	int phandle;
-	struct udevice *crtc_dev, *conn_dev;
+	struct udevice *crtc_dev;
 	struct rockchip_crtc *crtc;
-	const struct rockchip_connector *conn;
-	struct rockchip_panel *panel = NULL;
-	struct rockchip_bridge *bridge = NULL, *b = NULL;
-	struct rockchip_phy *phy = NULL;
+	struct rockchip_connector *conn, *split_conn;
 	struct display_state *s;
 	const char *name;
 	int ret;
@@ -1711,7 +1735,6 @@ static int rockchip_display_probe(struct udevice *dev)
 #if defined(CONFIG_ROCKCHIP_RK3568)
 	rockchip_display_fixup_dts((void *)blob);
 #endif
-
 	/* Before relocation we don't need to do anything */
 	if (!(gd->flags & GD_FLG_RELOC))
 		return 0;
@@ -1774,38 +1797,12 @@ static int rockchip_display_probe(struct udevice *dev)
 		}
 		crtc = (struct rockchip_crtc *)dev_get_driver_data(crtc_dev);
 
-		conn_dev = rockchip_of_find_connector(np_to_ofnode(ep_node));
-		if (!conn_dev) {
-			printf("Warn: can't find connect driver\n");
+		conn = rockchip_of_get_connector(np_to_ofnode(ep_node));
+		if (!conn) {
+			printf("Warn: can't get connect driver\n");
 			continue;
 		}
-
-		conn = (const struct rockchip_connector *)dev_get_driver_data(conn_dev);
-
-		phy = rockchip_of_find_phy(conn_dev);
-
-		panel = rockchip_of_find_panel(conn_dev);
-		if (!panel) {
-			/* No panel found yet, check for a bridge next. */
-			ret = rockchip_of_find_bridge(dev_ofnode(conn_dev), &bridge);
-			if (ret && ret != -ENODEV)
-				continue;
-
-			b = bridge;
-			while (b) {
-				struct rockchip_bridge *next_bridge = NULL;
-
-				ret = rockchip_of_find_bridge(dev_ofnode(b->dev), &next_bridge);
-				if (ret)
-					break;
-
-				b->next_bridge = next_bridge;
-				b = next_bridge;
-			}
-
-			if (b)
-				panel = rockchip_of_find_panel(b->dev);
-		}
+		split_conn = rockchip_get_split_connector(conn);
 
 		s = malloc(sizeof(*s));
 		if (!s)
@@ -1835,18 +1832,22 @@ static int rockchip_display_probe(struct udevice *dev)
 
 		if (s->force_output) {
 			timing_node = ofnode_find_subnode(node, "force_timing");
-			ret = display_get_force_timing_from_dts(timing_node, &s->force_mode);
+			ret = display_get_force_timing_from_dts(timing_node,
+								&s->force_mode,
+								&s->conn_state.bus_flags);
 			if (ofnode_read_u32(node, "force-bus-format", &s->force_bus_format))
 				s->force_bus_format = MEDIA_BUS_FMT_RGB888_1X24;
 		}
 
 		s->blob = blob;
-		s->panel_state.panel = panel;
-		s->conn_state.node = conn_dev->node;
-		s->conn_state.dev = conn_dev;
 		s->conn_state.connector = conn;
-		s->conn_state.phy = phy;
-		s->conn_state.bridge = bridge;
+		s->conn_state.secondary = NULL;
+		s->conn_state.type = conn->type;
+		if (split_conn) {
+			s->conn_state.secondary = split_conn;
+			s->conn_state.output_flags |= ROCKCHIP_OUTPUT_DUAL_CHANNEL_LEFT_RIGHT_MODE;
+			s->conn_state.output_flags |= conn->id ? ROCKCHIP_OUTPUT_DATA_SWAP : 0;
+		}
 		s->conn_state.overscan.left_margin = 100;
 		s->conn_state.overscan.right_margin = 100;
 		s->conn_state.overscan.top_margin = 100;
@@ -1871,20 +1872,24 @@ static int rockchip_display_probe(struct udevice *dev)
 					int cursor_plane = -1;
 
 					vp_id = ofnode_read_u32_default(vp_node, "reg", 0);
+
+					s->crtc_state.crtc->vps[vp_id].xmirror_en =
+						ofnode_read_bool(vp_node, "xmirror-enable");
+
 					ret = ofnode_read_u32_default(vp_node, "rockchip,plane-mask", 0);
 
 					cursor_plane = ofnode_read_u32_default(vp_node, "cursor-win-id", -1);
 					s->crtc_state.crtc->vps[vp_id].cursor_plane = cursor_plane;
 					if (ret) {
-						int primary_plane = 0;
-
 						s->crtc_state.crtc->vps[vp_id].plane_mask = ret;
 						s->crtc_state.crtc->assign_plane |= true;
-						primary_plane = ofnode_read_u32_default(vp_node, "rockchip,primary-plane", 0);
+						s->crtc_state.crtc->vps[vp_id].primary_plane_id =
+							ofnode_read_u32_default(vp_node, "rockchip,primary-plane", U8_MAX);
 						printf("get vp%d plane mask:0x%x, primary id:%d, cursor_plane:%d, from dts\n",
 						       vp_id,
 						       s->crtc_state.crtc->vps[vp_id].plane_mask,
-						       primary_plane,
+						       s->crtc_state.crtc->vps[vp_id].primary_plane_id == U8_MAX ? -1 :
+						       s->crtc_state.crtc->vps[vp_id].primary_plane_id,
 						       cursor_plane);
 					}
 
@@ -1898,18 +1903,13 @@ static int rockchip_display_probe(struct udevice *dev)
 			}
 		}
 
-		get_crtc_mcu_mode(&s->crtc_state);
+		get_crtc_mcu_mode(&s->crtc_state, port_node, is_ports_node);
 
 		ret = ofnode_read_u32_default(s->crtc_state.node,
 					      "rockchip,dual-channel-swap", 0);
 		s->crtc_state.dual_channel_swap = ret;
-		if (connector_panel_init(s)) {
-			printf("Warn: Failed to init panel drivers\n");
-			free(s);
-			continue;
-		}
 
-		if (connector_phy_init(s, data)) {
+		if (connector_phy_init(conn, data)) {
 			printf("Warn: Failed to init phy drivers\n");
 			free(s);
 			continue;
@@ -1940,31 +1940,45 @@ void rockchip_display_fixup(void *blob)
 {
 	const struct rockchip_connector_funcs *conn_funcs;
 	const struct rockchip_crtc_funcs *crtc_funcs;
-	const struct rockchip_connector *conn;
+	struct rockchip_connector *conn;
 	const struct rockchip_crtc *crtc;
 	struct display_state *s;
 	int offset;
+	int ret;
 	const struct device_node *np;
 	const char *path;
+	const char *cacm_header;
+	u64 aligned_memory_size;
 
 	if (fdt_node_offset_by_compatible(blob, 0, "rockchip,drm-logo") >= 0) {
-		list_for_each_entry(s, &rockchip_display_list, head)
-			load_bmp_logo(&s->logo, s->klogo_name);
+		list_for_each_entry(s, &rockchip_display_list, head) {
+			ret = load_bmp_logo(&s->logo, s->klogo_name);
+			if (ret < 0) {
+				s->is_klogo_valid = false;
+				printf("VP%d fail to load kernel logo\n", s->crtc_state.crtc_id);
+			} else {
+				s->is_klogo_valid = true;
+			}
+		}
 
 		if (!get_display_size())
 			return;
 
+		aligned_memory_size = (u64)ALIGN(get_display_size(), align_size);
 		offset = fdt_update_reserved_memory(blob, "rockchip,drm-logo",
 						    (u64)memory_start,
-						    (u64)get_display_size());
+						    aligned_memory_size);
 		if (offset < 0)
 			printf("failed to reserve drm-loader-logo memory\n");
 
-		offset = fdt_update_reserved_memory(blob, "rockchip,drm-cubic-lut",
-						    (u64)cubic_lut_memory_start,
-						    (u64)get_cubic_memory_size());
-		if (offset < 0)
-			printf("failed to reserve drm-cubic-lut memory\n");
+		if (get_cubic_memory_size()) {
+			aligned_memory_size = (u64)ALIGN(get_cubic_memory_size(), align_size);
+			offset = fdt_update_reserved_memory(blob, "rockchip,drm-cubic-lut",
+							    (u64)cubic_lut_memory_start,
+							    aligned_memory_size);
+			if (offset < 0)
+				printf("failed to reserve drm-cubic-lut memory\n");
+		}
 	} else {
 		printf("can't found rockchip,drm-logo, use rockchip,fb-logo\n");
 		/* Compatible with rkfb display, only need reserve memory */
@@ -1980,6 +1994,16 @@ void rockchip_display_fixup(void *blob)
 	}
 
 	list_for_each_entry(s, &rockchip_display_list, head) {
+		/*
+		 * If plane mask is not set in dts, fixup dts to assign it
+		 * whether crtc is initialized or not.
+		 */
+		if (s->crtc_state.crtc->funcs->fixup_dts && !s->crtc_state.crtc->assign_plane)
+			s->crtc_state.crtc->funcs->fixup_dts(s, blob);
+
+		if (!s->is_init || !s->is_klogo_valid)
+			continue;
+
 		conn = s->conn_state.connector;
 		if (!conn)
 			continue;
@@ -1987,6 +2011,11 @@ void rockchip_display_fixup(void *blob)
 		if (!conn_funcs) {
 			printf("failed to get exist connector\n");
 			continue;
+		}
+
+		if (s->conn_state.secondary) {
+			s->conn_state.mode.clock *= 2;
+			s->conn_state.mode.hdisplay *= 2;
 		}
 
 		crtc = s->crtc_state.crtc;
@@ -1998,12 +2027,6 @@ void rockchip_display_fixup(void *blob)
 			printf("failed to get exist crtc\n");
 			continue;
 		}
-
-		if (crtc_funcs->fixup_dts)
-			crtc_funcs->fixup_dts(s, blob);
-
-		if (conn_funcs->fixup_dts)
-			conn_funcs->fixup_dts(s, blob);
 
 		np = ofnode_to_np(s->node);
 		path = np->full_name;
@@ -2033,10 +2056,37 @@ void rockchip_display_fixup(void *blob)
 		FDT_SET_U32("overscan,bottom_margin", s->conn_state.overscan.bottom_margin);
 
 		if (s->conn_state.disp_info) {
+			cacm_header = (const char*)&s->conn_state.disp_info->cacm_header;
+
 			FDT_SET_U32("bcsh,brightness", s->conn_state.disp_info->bcsh_info.brightness);
 			FDT_SET_U32("bcsh,contrast", s->conn_state.disp_info->bcsh_info.contrast);
 			FDT_SET_U32("bcsh,saturation", s->conn_state.disp_info->bcsh_info.saturation);
 			FDT_SET_U32("bcsh,hue", s->conn_state.disp_info->bcsh_info.hue);
+
+			if (!strncasecmp(cacm_header, "CACM", 4)) {
+				FDT_SET_U32("post_csc,hue",
+					    s->conn_state.disp_info->csc_info.hue);
+				FDT_SET_U32("post_csc,saturation",
+					    s->conn_state.disp_info->csc_info.saturation);
+				FDT_SET_U32("post_csc,contrast",
+					    s->conn_state.disp_info->csc_info.contrast);
+				FDT_SET_U32("post_csc,brightness",
+					    s->conn_state.disp_info->csc_info.brightness);
+				FDT_SET_U32("post_csc,r_gain",
+					    s->conn_state.disp_info->csc_info.r_gain);
+				FDT_SET_U32("post_csc,g_gain",
+					    s->conn_state.disp_info->csc_info.g_gain);
+				FDT_SET_U32("post_csc,b_gain",
+					    s->conn_state.disp_info->csc_info.b_gain);
+				FDT_SET_U32("post_csc,r_offset",
+					    s->conn_state.disp_info->csc_info.r_offset);
+				FDT_SET_U32("post_csc,g_offset",
+					    s->conn_state.disp_info->csc_info.g_offset);
+				FDT_SET_U32("post_csc,b_offset",
+					    s->conn_state.disp_info->csc_info.b_offset);
+				FDT_SET_U32("post_csc,csc_enable",
+					    s->conn_state.disp_info->csc_info.csc_enable);
+			}
 		}
 
 		if (s->conn_state.disp_info->cubic_lut_data.size &&
@@ -2091,6 +2141,19 @@ static int do_rockchip_show_bmp(cmd_tbl_t *cmdtp, int flag, int argc,
 	return 0;
 }
 
+static int do_rockchip_vop_dump(cmd_tbl_t *cmdtp, int flag, int argc,
+				char *const argv[])
+{
+	int ret;
+
+	if (argc < 1 || argc > 2)
+		return CMD_RET_USAGE;
+
+	ret = rockchip_vop_dump(argv[1]);
+
+	return ret;
+}
+
 U_BOOT_CMD(
 	rockchip_show_logo, 1, 1, do_rockchip_logo_show,
 	"load and display log from resource partition",
@@ -2101,4 +2164,10 @@ U_BOOT_CMD(
 	rockchip_show_bmp, 2, 1, do_rockchip_show_bmp,
 	"load and display bmp from resource partition",
 	"    <bmp_name>"
+);
+
+U_BOOT_CMD(
+	vop_dump, 2, 1, do_rockchip_vop_dump,
+	"dump vop regs",
+	" [a/all]"
 );

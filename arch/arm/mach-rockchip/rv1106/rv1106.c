@@ -20,6 +20,7 @@ DECLARE_GLOBAL_DATA_PTR;
 #define CORE_GRF_BASE			0xff040000
 #define CORE_GRF_CACHE_PERI_ADDR_START	0x0024
 #define CORE_GRF_CACHE_PERI_ADDR_END	0x0028
+#define CORE_GRF_MCU_CACHE_MISC		0x002c
 
 #define PERI_GRF_BASE			0xff000000
 #define PERI_GRF_USBPHY_CON0		0x0050
@@ -122,6 +123,13 @@ DECLARE_GLOBAL_DATA_PTR;
 #define GPIO4B_IOMUX_SEL_L		0x008
 
 #define GPIO4_IOC_GPIO4B_DS0		0x0030
+
+/* OS_REG1[2:0]: chip ver */
+#define CHIP_VER_REG			0xff020204
+#define CHIP_VER_MSK			0x7
+#define V(x)				((x) - 1)
+#define ROM_VER_REG			0xffff4ffc
+#define ROM_V2				0x30303256
 
 /* uart0 iomux */
 /* gpio0a0 */
@@ -393,6 +401,12 @@ void board_debug_uart_init(void)
 int arch_cpu_init(void)
 {
 #ifdef CONFIG_SPL_BUILD
+	/* Save chip version to OS_REG1[2:0] */
+	if (readl(ROM_VER_REG) == ROM_V2)
+		writel((readl(CHIP_VER_REG) & ~CHIP_VER_MSK) | V(2), CHIP_VER_REG);
+	else
+		writel((readl(CHIP_VER_REG) & ~CHIP_VER_MSK) | V(1), CHIP_VER_REG);
+
 	/* Set all devices to Non-secure */
 	writel(0xffff0000, PERI_SGRF_BASE + PERI_SGRF_FIREWALL_CON0);
 	writel(0xffff0000, PERI_SGRF_BASE + PERI_SGRF_FIREWALL_CON1);
@@ -413,7 +427,8 @@ int arch_cpu_init(void)
 	writel(0xff00ffff, FW_SHRM_BASE + FW_SHRM_MST1_REG);
 
 	/* Set fspi clk 6mA */
-	writel(0x0f000700, GPIO4_IOC_BASE + GPIO4_IOC_GPIO4B_DS0);
+	if ((readl(GPIO4_IOC_BASE + GPIO4B_IOMUX_SEL_L) & 0x70) == 0x20)
+		writel(0x3f000700, GPIO4_IOC_BASE + GPIO4_IOC_GPIO4B_DS0);
 
 	/*
 	 * Set the USB2 PHY in suspend mode and turn off the
@@ -495,6 +510,11 @@ int spl_fit_standalone_release(char *id, uintptr_t entry_point)
 
 	return 0;
 }
+
+void rk_meta_process(void)
+{
+	writel(0x00080008, CORE_GRF_BASE + CORE_GRF_MCU_CACHE_MISC);
+}
 #endif
 
 #ifdef CONFIG_ROCKCHIP_IMAGE_TINY
@@ -517,16 +537,4 @@ int rk_board_scan_bootdev(void)
 	return 0;
 }
 #endif
-
-int rk_board_late_init(void)
-{
-#if defined(CONFIG_CMD_SCRIPT_UPDATE)
-	struct blk_desc *desc;
-
-	desc = rockchip_get_bootdev();
-	if (desc && desc->if_type == IF_TYPE_MMC && desc->devnum == 1)
-		run_command("sd_update", 0);
-#endif
-	return 0;
-}
 

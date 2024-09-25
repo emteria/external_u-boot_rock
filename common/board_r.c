@@ -60,6 +60,9 @@
 #include <bidram.h>
 #include <boot_rkimg.h>
 #include <mtd_blk.h>
+#if defined(CONFIG_GPIO_HOG)
+#include <asm/gpio.h>
+#endif
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -473,21 +476,6 @@ static int initr_mmc(void)
 #ifndef CONFIG_USING_KERNEL_DTB
 	puts("MMC:   ");
 	mmc_initialize(gd->bd);
-#endif
-	return 0;
-}
-#endif
-
-#ifdef CONFIG_MTD_BLK
-static int initr_mtd_blk(void)
-{
-#ifndef CONFIG_USING_KERNEL_DTB
-	struct blk_desc *dev_desc;
-
-	puts("mtd_blk:   ");
-	dev_desc = rockchip_get_bootdev();
-	if (dev_desc)
-		mtd_blk_map_partitions(dev_desc);
 #endif
 	return 0;
 }
@@ -964,9 +952,6 @@ static init_fnc_t init_sequence_r[] = {
 #ifdef CONFIG_CMD_ONENAND
 	initr_onenand,
 #endif
-#ifdef CONFIG_MTD_BLK
-	initr_mtd_blk,
-#endif
 #ifdef CONFIG_MMC
 	initr_mmc,
 #endif
@@ -1016,6 +1001,9 @@ static init_fnc_t init_sequence_r[] = {
 	/* PPC has a udelay(20) here dating from 2002. Why? */
 #ifdef CONFIG_CMD_NET
 	initr_ethaddr,
+#endif
+#if defined(CONFIG_GPIO_HOG)
+	gpio_hog_probe_all,
 #endif
 #ifdef CONFIG_BOARD_LATE_INIT
 	board_late_init,

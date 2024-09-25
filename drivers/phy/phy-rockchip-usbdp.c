@@ -131,6 +131,7 @@ struct rockchip_udphy {
 	u32 dp_lane_sel[4];
 	u32 dp_aux_dout_sel;
 	u32 dp_aux_din_sel;
+	u32 max_link_rate;
 	u8 bw; /* dp bandwidth */
 	int id;
 
@@ -548,14 +549,15 @@ static int udphy_disable(struct rockchip_udphy *udphy)
 	return 0;
 }
 
-static int udphy_parse_lane_mux_data(struct rockchip_udphy *udphy, const struct device_node *np)
+static int udphy_parse_lane_mux_data(struct rockchip_udphy *udphy, struct udevice *dev)
 {
+	const struct device_node *np = ofnode_to_np(dev->node);
 	struct property *prop;
 	int ret, i, len, num_lanes;
 
 	prop = of_find_property(np, "rockchip,dp-lane-mux", &len);
 	if (!prop) {
-		dev_dbg(udphy->dev, "failed to find dp lane mux, following dp alt mode\n");
+		dev_dbg(dev, "failed to find dp lane mux, following dp alt mode\n");
 		udphy->mode = UDPHY_MODE_USB;
 		return 0;
 	}
@@ -563,13 +565,13 @@ static int udphy_parse_lane_mux_data(struct rockchip_udphy *udphy, const struct 
 	num_lanes = len / sizeof(u32);
 
 	if (num_lanes != 2 && num_lanes != 4) {
-		dev_err(udphy->dev, "invalid number of lane mux\n");
+		dev_err(dev, "invalid number of lane mux\n");
 		return -EINVAL;
 	}
 
 	ret = of_read_u32_array(np, "rockchip,dp-lane-mux", udphy->dp_lane_sel, num_lanes);
 	if (ret) {
-		dev_err(udphy->dev, "get dp lane mux failed\n");
+		dev_err(dev, "get dp lane mux failed\n");
 		return -EINVAL;
 	}
 
@@ -577,7 +579,7 @@ static int udphy_parse_lane_mux_data(struct rockchip_udphy *udphy, const struct 
 		int j;
 
 		if (udphy->dp_lane_sel[i] > 3) {
-			dev_err(udphy->dev, "lane mux between 0 and 3, exceeding the range\n");
+			dev_err(dev, "lane mux between 0 and 3, exceeding the range\n");
 			return -EINVAL;
 		}
 
@@ -585,22 +587,23 @@ static int udphy_parse_lane_mux_data(struct rockchip_udphy *udphy, const struct 
 
 		for (j = i + 1; j < num_lanes; j++) {
 			if (udphy->dp_lane_sel[i] == udphy->dp_lane_sel[j]) {
-				dev_err(udphy->dev, "set repeat lane mux value\n");
+				dev_err(dev, "set repeat lane mux value\n");
 				return -EINVAL;
 			}
 		}
 	}
 
 	udphy->mode = UDPHY_MODE_DP;
-	if (num_lanes == 2)
+	if (num_lanes == 2) {
 		udphy->mode |= UDPHY_MODE_USB;
+		udphy->flip = udphy->lane_mux_sel[0] == PHY_LANE_MUX_DP ? true : false;
+	}
 
 	return 0;
 }
 
 static int udphy_parse_dt(struct rockchip_udphy *udphy, struct udevice *dev)
 {
-	const struct device_node *np = ofnode_to_np(dev->node);
 	enum usb_device_speed maximum_speed;
 	int ret;
 
@@ -644,7 +647,7 @@ static int udphy_parse_dt(struct rockchip_udphy *udphy, struct udevice *dev)
 		}
 	}
 
-	ret = udphy_parse_lane_mux_data(udphy, np);
+	ret = udphy_parse_lane_mux_data(udphy, dev);
 	if (ret)
 		return ret;
 
@@ -732,6 +735,7 @@ static int rockchip_dpphy_power_on(struct phy *phy)
 
 	dp_lanes = udphy_dplane_get(udphy);
 	phy->attrs.bus_width = dp_lanes;
+	phy->attrs.max_link_rate = udphy->max_link_rate;
 
 	ret = udphy_power_on(udphy, UDPHY_MODE_DP);
 	if (ret)
@@ -945,7 +949,7 @@ static int rockchip_udphy_bind(struct udevice *parent)
 
 	dev_for_each_subnode(subnode, parent) {
 		if (!ofnode_valid(subnode)) {
-			printf("%s: no subnode for %s", __func__, parent->name);
+			printf("%s: no subnode for %s\n", __func__, parent->name);
 			return -ENXIO;
 		}
 
@@ -1012,14 +1016,14 @@ static int rk3588_udphy_status_check(struct rockchip_udphy *udphy)
 						       val & TRSV_LN0_MON_RX_CDR_LOCK_DONE,
 						       200, 100);
 			if (ret)
-				dev_err(udphy->dev, "trsv ln0 mon rx cdr lock timeout\n");
+				dev_notice(udphy->dev, "trsv ln0 mon rx cdr lock timeout\n");
 		} else {
 			ret = regmap_read_poll_timeout(udphy->pma_regmap,
 						       TRSV_LN2_MON_RX_CDR_DONE_OFFSET, val,
 						       val & TRSV_LN2_MON_RX_CDR_LOCK_DONE,
 						       200, 100);
 			if (ret)
-				dev_err(udphy->dev, "trsv ln2 mon rx cdr lock timeout\n");
+				dev_notice(udphy->dev, "trsv ln2 mon rx cdr lock timeout\n");
 		}
 	}
 
@@ -1240,6 +1244,29 @@ static int rk3588_dp_phy_set_voltages(struct rockchip_udphy *udphy,
 	return 0;
 }
 
+static int rockchip_dpphy_probe(struct udevice *dev)
+{
+	struct rockchip_udphy *udphy = dev_get_priv(dev->parent);
+	u32 max_link_rate;
+
+	max_link_rate = dev_read_u32_default(dev, "max-link-rate", 8100);
+	switch (max_link_rate) {
+	case 1620:
+	case 2700:
+	case 5400:
+	case 8100:
+		break;
+	default:
+		dev_warn(dev, "invalid max-link-rate %d, using 8100\n", max_link_rate);
+		max_link_rate = 8100;
+		break;
+	}
+
+	udphy->max_link_rate = max_link_rate;
+
+	return 0;
+}
+
 static const char * const rk3588_udphy_rst_l[] = {
 	"init", "cmn", "lane", "pcs_apb", "pma_apb"
 };
@@ -1291,6 +1318,7 @@ U_BOOT_DRIVER(rockchip_udphy_dp_port) = {
 	.name		= "rockchip_udphy_dp_port",
 	.id		= UCLASS_PHY,
 	.ops		= &rockchip_dpphy_ops,
+	.probe		= rockchip_dpphy_probe,
 };
 
 U_BOOT_DRIVER(rockchip_udphy) = {

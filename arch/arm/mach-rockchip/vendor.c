@@ -10,6 +10,7 @@
 #include <boot_rkimg.h>
 #include <nand.h>
 #include <part.h>
+#include <fdt_support.h>
 
 /* tag for vendor check */
 #define VENDOR_TAG		0x524B5644
@@ -20,6 +21,9 @@
 /* align to 64 bytes */
 #define VENDOR_BTYE_ALIGN	0x3F
 #define VENDOR_BLOCK_SIZE	512
+
+#define PAGE_ALGIN_SIZE		(4096uL)
+#define PAGE_ALGIN_MASK		(~(PAGE_ALGIN_SIZE - 1))
 
 /* --- Emmc define --- */
 /* Starting address of the Vendor in memory. */
@@ -272,6 +276,11 @@ re_write:
 		if (s_flash_info.blk_offset >= s_flash_info.part_size)
 			s_flash_info.blk_offset = 0;
 		s_flash_info.page_offset = 0;
+		/*
+		 * The spi NOR driver only erase 4KB while write data, and here need to
+		 * erase one block for vendor storage request.
+		 */
+		blk_derase(dev_desc, s_flash_info.part_offset + s_flash_info.blk_offset, s_flash_info.blk_size);
 	}
 
 	dev_desc->op_flag |= BLK_MTD_CONT_WRITE;
@@ -312,6 +321,15 @@ static int vendor_ops(u8 *buffer, u32 addr, u32 n_sec, int write)
 		printf("%s: dev_desc is NULL!\n", __func__);
 		return -ENODEV;
 	}
+
+	if (dev_desc->if_type == IF_TYPE_NVME || dev_desc->if_type == IF_TYPE_SCSI) {
+		dev_desc = blk_get_devnum_by_type(IF_TYPE_MTD, BLK_MTD_SPI_NOR);
+		if (!dev_desc) {
+			printf("%s: dev_desc is NULL!\n", __func__);
+			return -ENODEV;
+		}
+	}
+
 	/* Get the offset address according to the device type */
 	switch (dev_desc->if_type) {
 	case IF_TYPE_MMC:
@@ -422,6 +440,14 @@ int vendor_storage_init(void)
 		return -ENODEV;
 	}
 
+	if (dev_desc->if_type == IF_TYPE_NVME || dev_desc->if_type == IF_TYPE_SCSI) {
+		dev_desc = blk_get_devnum_by_type(IF_TYPE_MTD, BLK_MTD_SPI_NOR);
+		if (!dev_desc) {
+			printf("%s: dev_desc is NULL!\n", __func__);
+			return -ENODEV;
+		}
+	}
+
 	switch (dev_desc->if_type) {
 	case IF_TYPE_MMC:
 		size = EMMC_VENDOR_INFO_SIZE;
@@ -471,13 +497,14 @@ int vendor_storage_init(void)
 	/* Initialize */
 	bootdev_type = dev_desc->if_type;
 
-	/* Always use, no need to release */
-	buffer = (u8 *)malloc(size);
+	/* Always use, no need to release, align to page size for kerenl reserved memory */
+	buffer = (u8 *)memalign(PAGE_ALGIN_SIZE, size);
 	if (!buffer) {
 		printf("[Vendor ERROR]:Malloc failed!\n");
 		ret = -ENOMEM;
 		goto out;
 	}
+
 	/* Pointer initialization */
 	vendor_info.hdr = (struct vendor_hdr *)buffer;
 	vendor_info.item = (struct vendor_item *)(buffer + sizeof(struct vendor_hdr));
@@ -542,6 +569,29 @@ out:
 		bootdev_type = 0;
 
 	return ret;
+}
+
+void vendor_storage_fixup(void *blob)
+{
+	unsigned long size;
+	unsigned long start;
+	ulong offset;
+
+	/* init vendor storage */
+	if (!bootdev_type) {
+		if (vendor_storage_init() < 0)
+			return;
+	}
+
+	offset = fdt_node_offset_by_compatible(blob, 0, "rockchip,vendor-storage-rm");
+	if (offset >= 0) {
+		start = (unsigned long)vendor_info.hdr;
+		size = (unsigned long)((void *)vendor_info.version2 - (void *)vendor_info.hdr);
+		size += 4;
+		fdt_update_reserved_memory(blob, "rockchip,vendor-storage-rm",
+					   (u64)start,
+					   (u64)size);
+	}
 }
 
 /*

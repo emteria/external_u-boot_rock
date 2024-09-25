@@ -15,6 +15,10 @@
 #define CONFIG_SPL_BSS_START_ADDR	0x03fe0000
 #define CONFIG_SPL_BSS_MAX_SIZE		0x00010000
 #define CONFIG_SPL_STACK		0x03fe0000
+#ifdef CONFIG_SPL_LOAD_FIT_ADDRESS
+#undef CONFIG_SPL_LOAD_FIT_ADDRESS
+#endif
+#define CONFIG_SPL_LOAD_FIT_ADDRESS	0x10000000
 
 #define CONFIG_SYS_MALLOC_LEN		(32 << 20)
 #define CONFIG_SYS_CBSIZE		1024
@@ -57,12 +61,12 @@
  *	the image header will use the 0x180000~0x200000, which is
  *	overlap with share memory region 0x100000~0x200000.
  *
- * compressed kernel:   84M ~ 131M
+ * compressed kernel:   84M ~ 130M
  */
 #define ENV_MEM_LAYOUT_SETTINGS \
 	"scriptaddr=0x00500000\0" \
 	"pxefile_addr_r=0x00600000\0" \
-	"fdt_addr_r=0x0a100000\0" \
+	"fdt_addr_r=0x08300000\0" \
 	"kernel_addr_r=0x00400000\0" \
 	"kernel_addr_c=0x05480000\0" \
 	"ramdisk_addr_r=0x0a200000\0"

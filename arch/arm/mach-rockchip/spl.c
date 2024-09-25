@@ -19,10 +19,12 @@
 #ifdef CONFIG_ROCKCHIP_PRELOADER_ATAGS
 #include <asm/arch/rk_atags.h>
 #endif
+#include <asm/arch/pcie_ep_boot.h>
 #include <asm/arch/sdram.h>
 #include <asm/arch/boot_mode.h>
 #include <asm/arch-rockchip/sys_proto.h>
 #include <asm/io.h>
+#include <asm/arch/param.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -174,6 +176,9 @@ void board_init_f(ulong dummy)
 	printascii("U-Boot SPL board init");
 #endif
 	gd->sys_start_tick = get_ticks();
+#ifdef CONFIG_SPL_PCIE_EP_SUPPORT
+	rockchip_pcie_ep_init();
+#endif
 #ifdef CONFIG_SPL_FRAMEWORK
 	ret = spl_early_init();
 	if (ret) {
@@ -196,6 +201,9 @@ void board_init_f(ulong dummy)
 
 	arch_cpu_init();
 	rk_board_init_f();
+#ifdef CONFIG_SPL_RAM_DEVICE
+	rockchip_pcie_ep_get_firmware();
+#endif
 #if CONFIG_IS_ENABLED(ROCKCHIP_BACK_TO_BROM) && !defined(CONFIG_SPL_BOARD_INIT)
 	back_to_bootrom(BROM_BOOT_NEXTSTAGE);
 #endif
@@ -216,11 +224,16 @@ int board_init_f_boot_flags(void)
 {
 	int boot_flags = 0;
 
+#ifdef CONFIG_FPGA_ROCKCHIP
+	arch_fpga_init();
+#endif
+#ifdef CONFIG_PSTORE
+	param_parse_pstore();
+#endif
 	/* pre-loader serial */
 #if defined(CONFIG_ROCKCHIP_PRELOADER_SERIAL) && \
     defined(CONFIG_ROCKCHIP_PRELOADER_ATAGS)
 	struct tag *t;
-
 
 	t = atags_get_tag(ATAG_SERIAL);
 	if (t) {
@@ -362,7 +375,10 @@ void spl_next_stage(struct spl_image_info *spl)
 		spl->next_stage = SPL_NEXT_STAGE_KERNEL;
 		break;
 	default:
-		spl->next_stage = SPL_NEXT_STAGE_UBOOT;
+		if ((reg_boot_mode & REBOOT_FLAG) != REBOOT_FLAG)
+			spl->next_stage = SPL_NEXT_STAGE_KERNEL;
+		else
+			spl->next_stage = SPL_NEXT_STAGE_UBOOT;
 	}
 }
 #endif
