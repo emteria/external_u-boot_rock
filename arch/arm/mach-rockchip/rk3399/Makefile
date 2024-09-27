@@ -4,6 +4,7 @@
 # SPDX-License-Identifier:     GPL-2.0+
 #
 
+obj-y += radxa_overlay.o
 obj-y += clk_rk3399.o
 obj-y += rk3399.o
 obj-y += syscon_rk3399.o
